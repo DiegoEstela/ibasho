@@ -28,9 +28,9 @@ export async function proxy(request: NextRequest) {
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getClaims valida el token en local con las claves públicas (JWKS); no hace una llamada a Supabase.
+  const { data } = await supabase.auth.getClaims();
+  const user = data?.claims ? { id: data.claims.sub } : null;
 
   const { pathname } = request.nextUrl;
 

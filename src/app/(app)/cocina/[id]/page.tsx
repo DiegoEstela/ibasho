@@ -1,15 +1,16 @@
 import { Suspense } from "react";
-import Link from "next/link";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { notFound } from "next/navigation";
-import { ChevronLeft, Clock, Heart, Trash2, Users } from "lucide-react";
-import { requireHousehold } from "@/lib/household";
+import { Clock, Heart, Trash2, Users } from "lucide-react";
+import { createClient } from "@/lib/supabase/server";
 import { difficultyLabel } from "@/lib/cocina/labels";
 import { formatQuantity } from "@/lib/cocina/parse";
 import { deleteRecipe, toggleFavorite } from "../actions";
 
 async function Recipe({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { supabase } = await requireHousehold();
+  const supabase = await createClient();
 
   const { data: recipe } = await supabase
     .from("recipes")
@@ -25,25 +26,24 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
 
   return (
     <article className="max-w-2xl lg:max-w-6xl">
-      <Link href="/cocina" className="inline-flex min-h-11 items-center gap-1 text-sm text-ink-soft">
-        <ChevronLeft size={18} /> Cocina
-      </Link>
+      <PageHeader
+        title={recipe.name}
+        back="/cocina"
+        actions={
+          <form action={toggleFavorite}>
+            <input type="hidden" name="id" value={recipe.id} />
+            <input type="hidden" name="favorite" value={String(!recipe.is_favorite)} />
+            <button
+              aria-label={recipe.is_favorite ? "Quitar de favoritos" : "Marcar como favorito"}
+              className="flex size-10 items-center justify-center rounded-full border border-line bg-surface transition active:scale-90"
+            >
+              <Heart size={18} className={recipe.is_favorite ? "fill-hanko text-hanko" : "text-ink-soft"} />
+            </button>
+          </form>
+        }
+      />
 
-      <div className="flex items-start justify-between gap-3">
-        <h1 className="font-display text-3xl font-bold">{recipe.name}</h1>
-        <form action={toggleFavorite}>
-          <input type="hidden" name="id" value={recipe.id} />
-          <input type="hidden" name="favorite" value={String(!recipe.is_favorite)} />
-          <button
-            aria-label={recipe.is_favorite ? "Quitar de favoritos" : "Marcar como favorito"}
-            className="flex size-11 items-center justify-center rounded-full border border-line bg-surface transition active:scale-90"
-          >
-            <Heart size={20} className={recipe.is_favorite ? "fill-hanko text-hanko" : "text-ink-soft"} />
-          </button>
-        </form>
-      </div>
-
-      <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-soft">
+      <p className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-soft lg:mt-2 lg:text-sm">
         <span className="flex items-center gap-1"><Users size={14} /> {recipe.servings} porciones</span>
         {recipe.prep_minutes != null && (
           <span className="flex items-center gap-1"><Clock size={14} /> {recipe.prep_minutes} min</span>
@@ -61,13 +61,13 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
 
       <div className="lg:mt-8 lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-10">
       <div>
-      <h2 className="mt-8 font-display text-xl font-bold lg:mt-0">Ingredientes</h2>
+      <h2 className="mt-5 font-display text-base font-bold lg:mt-0 lg:text-xl">Ingredientes</h2>
       {ingredients.length ? (
-        <ul className="mt-3 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+        <ul className="mt-2 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface text-[15px] lg:mt-3 lg:text-base">
           {ingredients.map((i) => (
-            <li key={i.id} className="flex min-h-11 items-center justify-between gap-3 px-4 py-2">
+            <li key={i.id} className="flex min-h-10 items-center justify-between gap-3 px-3 py-1.5 lg:min-h-11 lg:px-4 lg:py-2">
               <span>{i.name}</span>
-              <span className="text-sm text-ink-soft">{formatQuantity(i.quantity, i.unit)}</span>
+              <span className="text-xs text-ink-soft lg:text-sm">{formatQuantity(i.quantity, i.unit)}</span>
             </li>
           ))}
         </ul>
@@ -77,15 +77,15 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
 
       </div>
       <div>
-      <h2 className="mt-8 font-display text-xl font-bold lg:mt-0">Pasos</h2>
+      <h2 className="mt-5 font-display text-base font-bold lg:mt-0 lg:text-xl">Pasos</h2>
       {steps.length ? (
-        <ol className="mt-3 flex flex-col gap-3">
+        <ol className="mt-2 flex flex-col gap-2 lg:mt-3 lg:gap-3">
           {steps.map((s, n) => (
-            <li key={s.id} className="flex gap-3 rounded-2xl border border-line bg-surface p-4">
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-forest/15 text-sm font-bold text-forest">
+            <li key={s.id} className="flex gap-3 rounded-2xl border border-line bg-surface p-3 lg:p-4">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-forest/15 text-xs font-bold text-forest lg:size-7 lg:text-sm">
                 {n + 1}
               </span>
-              <p className="leading-relaxed">{s.body}</p>
+              <p className="text-[15px] leading-relaxed lg:text-base">{s.body}</p>
             </li>
           ))}
         </ol>
@@ -98,12 +98,12 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
 
       {recipe.notes && (
         <>
-          <h2 className="mt-8 font-display text-xl font-bold">Notas</h2>
+          <h2 className="mt-5 font-display text-base font-bold lg:mt-8 lg:text-xl">Notas</h2>
           <p className="mt-2 whitespace-pre-line text-ink-soft">{recipe.notes}</p>
         </>
       )}
 
-      <form action={deleteRecipe} className="mt-10">
+      <form action={deleteRecipe} className="mt-6 lg:mt-10">
         <input type="hidden" name="id" value={recipe.id} />
         <button className="inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm text-hanko">
           <Trash2 size={16} /> Eliminar receta
@@ -115,7 +115,7 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
 
 export default function RecetaPage({ params }: { params: Promise<{ id: string }> }) {
   return (
-    <Suspense fallback={<p className="text-ink-soft">Cargando…</p>}>
+    <Suspense fallback={<PageSkeleton />}>
       <Recipe params={params} />
     </Suspense>
   );

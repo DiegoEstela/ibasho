@@ -1,12 +1,15 @@
 import { Suspense } from "react";
+import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { requireHousehold } from "@/lib/household";
+import { createClient } from "@/lib/supabase/server";
 import type { CustomCategoryRow } from "./categoryTypes";
 import { ShoppingList, type Item, type Member, type Product } from "./ShoppingList";
 
 async function Compras() {
-  const { supabase, user, household } = await requireHousehold();
+  const supabase = await createClient();
 
-  const [{ data: items }, { data: products }, { data: profiles }, { data: categories }] = await Promise.all([
+  const [{ user, household }, { data: items }, { data: products }, { data: profiles }, { data: categories }] = await Promise.all([
+    requireHousehold(),
     supabase.from("shopping_items").select("*").order("created_at", { ascending: false }).limit(500),
     supabase.from("products").select("id, name, category").order("name").limit(1000),
     supabase.from("profiles").select("id, display_name, color"),
@@ -33,7 +36,7 @@ async function Compras() {
 
 export default function ComprasPage() {
   return (
-    <Suspense fallback={<h1 className="font-display text-3xl font-bold lg:text-4xl">Compras</h1>}>
+    <Suspense fallback={<PageSkeleton />}>
       <Compras />
     </Suspense>
   );

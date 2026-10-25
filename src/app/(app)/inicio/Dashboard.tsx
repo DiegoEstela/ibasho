@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Bell, Check, Minus, Pencil, Plus, Share2 } from "lucide-react";
 import { ShareCode } from "@/components/onboarding/ShareCode";
 import { BottomSheet } from "@/components/ui/BottomSheet";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { createClient } from "@/lib/supabase/client";
 import { timeAgo } from "@/lib/utils/time";
 import { MIN_SLOTS, WIDGETS, type WidgetDef, type WidgetId } from "./catalog";
@@ -31,7 +32,6 @@ type Member = { id: string; name: string; color: string };
 
 type Props = {
   userId: string;
-  displayName: string;
   householdName: string;
   inviteCode: string;
   initialWidgets: WidgetId[];
@@ -78,7 +78,6 @@ const tint = (key: string, percent = 16) => `color-mix(in srgb, ${colorOf(key)} 
 
 export function Dashboard({
   userId,
-  displayName,
   householdName,
   inviteCode,
   initialWidgets,
@@ -139,35 +138,34 @@ export function Dashboard({
   const canAddMore = chosen.length < WIDGETS.length;
 
   const iconButton =
-    "relative flex size-11 items-center justify-center rounded-full border border-line bg-surface text-ink-soft transition active:scale-90";
+    "relative flex size-10 items-center justify-center rounded-full border border-line bg-surface text-ink-soft transition active:scale-90";
 
   return (
     <section className="max-w-[1500px]">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <p className="font-display text-sm text-terracotta">{householdName}</p>
-          <h1 className="font-display text-3xl font-bold lg:text-4xl">Hola{displayName ? `, ${displayName}` : ""}</h1>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={openAvisos} aria-label={unread ? `Novedades: ${unread} sin leer` : "Novedades"} className={iconButton}>
-            <Bell size={20} strokeWidth={1.75} />
-            {unread > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 flex min-w-5 items-center justify-center rounded-full bg-hanko px-1 text-[11px] font-bold text-surface">
-                {unread > 9 ? "9+" : unread}
-              </span>
-            )}
-          </button>
-          <button onClick={() => setSheet("compartir")} aria-label="Invitar a tu pareja" className={iconButton}>
-            <Share2 size={20} strokeWidth={1.75} />
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        title={`Hogar: ${householdName}`}
+        actions={
+          <>
+            <button onClick={openAvisos} aria-label={unread ? `Novedades: ${unread} sin leer` : "Novedades"} className={iconButton}>
+              <Bell size={20} strokeWidth={1.75} />
+              {unread > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex min-w-5 items-center justify-center rounded-full bg-hanko px-1 text-[11px] font-bold text-surface">
+                  {unread > 9 ? "9+" : unread}
+                </span>
+              )}
+            </button>
+            <button onClick={() => setSheet("compartir")} aria-label="Invitar a tu pareja" className={iconButton}>
+              <Share2 size={20} strokeWidth={1.75} />
+            </button>
+          </>
+        }
+      />
 
-      <div className="mt-8 flex items-center justify-between">
-        <h2 className="font-display text-xl font-bold">Mi resumen</h2>
+      <div className="mt-3 flex items-center justify-between lg:mt-8">
+        <h2 className="font-display text-base font-bold lg:text-xl">Mi resumen</h2>
         <button
           onClick={() => setEditMode((v) => !v)}
-          className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm font-medium text-forest"
+          className="flex min-h-10 items-center gap-2 rounded-xl px-2 text-sm font-medium text-forest"
         >
           {editMode ? <Check size={16} /> : <Pencil size={16} />}
           {editMode ? "Listo" : "Editar"}
@@ -180,7 +178,7 @@ export function Dashboard({
         </p>
       )}
 
-      <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-5">
+      <div className="mt-2 grid grid-cols-2 gap-2.5 lg:mt-3 lg:grid-cols-4 lg:gap-5">
         {chosen.map((def) => (
           <WidgetCard key={def.id} def={def} stats={stats} editMode={editMode} onRemove={() => remove(def.id)} />
         ))}
@@ -281,7 +279,7 @@ function AddTile({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="flex min-h-44 flex-col items-center justify-center gap-2 rounded-3xl border border-dashed border-ink-soft/40 text-ink-soft transition active:scale-[0.98] lg:min-h-52"
+      className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-ink-soft/40 text-ink-soft transition active:scale-[0.98] lg:min-h-52 lg:rounded-3xl"
     >
       <span className="flex size-11 items-center justify-center rounded-2xl bg-washi-deep">
         <Plus size={22} />
@@ -304,19 +302,19 @@ function WidgetCard({
 }) {
   const body = (
     <div
-      className="flex h-full min-h-44 flex-col rounded-3xl border border-line p-4 lg:min-h-52 lg:p-5"
+      className="flex h-full min-h-32 flex-col rounded-2xl border border-line p-3 lg:min-h-52 lg:rounded-3xl lg:p-5"
       style={{ background: tint(def.color) }}
     >
       <div className="flex items-center gap-2">
         <span
-          className="flex size-10 items-center justify-center rounded-xl"
+          className="flex size-8 items-center justify-center rounded-lg lg:size-10 lg:rounded-xl"
           style={{ background: tint(def.color, 28), color: colorOf(def.color) }}
         >
-          <def.icon size={20} strokeWidth={1.75} />
+          <def.icon className="size-4 lg:size-5" strokeWidth={1.75} />
         </span>
-        <span className="font-display text-base font-bold">{def.label}</span>
+        <span className="font-display text-sm font-bold lg:text-base">{def.label}</span>
       </div>
-      <div className="mt-3 flex flex-1 flex-col">
+      <div className="mt-2 flex flex-1 flex-col lg:mt-3">
         <WidgetBody def={def} stats={stats} />
       </div>
     </div>
@@ -351,7 +349,7 @@ function WidgetBody({ def, stats }: { def: WidgetDef; stats: Stats }) {
     }
     return (
       <>
-        <p className="font-display text-4xl font-bold leading-none">{stats.pendingCount}</p>
+        <p className="font-display text-3xl font-bold leading-none lg:text-4xl">{stats.pendingCount}</p>
         <p className="mt-1 text-sm text-ink-soft">{stats.pendingCount === 1 ? "producto por comprar" : "productos por comprar"}</p>
         <p className="mt-auto truncate pt-3 text-sm text-ink-soft">{stats.topPending.join(", ")}</p>
       </>
@@ -364,7 +362,7 @@ function WidgetBody({ def, stats }: { def: WidgetDef; stats: Stats }) {
     }
     return (
       <>
-        <p className="font-display text-4xl font-bold leading-none">{stats.recipesCount}</p>
+        <p className="font-display text-3xl font-bold leading-none lg:text-4xl">{stats.recipesCount}</p>
         <p className="mt-1 text-sm text-ink-soft">{stats.recipesCount === 1 ? "receta guardada" : "recetas guardadas"}</p>
         <p className="mt-auto truncate pt-3 text-sm text-ink-soft">
           {stats.favoritesCount > 0

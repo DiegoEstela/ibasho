@@ -1,17 +1,22 @@
 import { Suspense } from "react";
+import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { requireHousehold } from "@/lib/household";
+import { createClient } from "@/lib/supabase/server";
 import { Dashboard, type RecentItem, type Stats } from "./Dashboard";
 import { DEFAULT_WIDGETS, isWidgetId } from "./catalog";
 
 async function Resumen() {
-  const { supabase, user, household, displayName } = await requireHousehold();
+  const supabase = await createClient();
+  const { data: claims } = await supabase.auth.getClaims();
+  const userId = claims?.claims?.sub ?? "";
 
-  const [{ data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }] =
+  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }] =
     await Promise.all([
+      requireHousehold(),
       supabase.from("shopping_items").select("name").eq("done", false).order("created_at", { ascending: false }).limit(200),
       supabase.from("recipes").select("name, is_favorite").order("created_at", { ascending: false }).limit(200),
       supabase.from("profiles").select("id, display_name, color"),
-      supabase.from("profiles").select("dashboard_widgets").eq("id", user.id).maybeSingle(),
+      supabase.from("profiles").select("dashboard_widgets").eq("id", userId).maybeSingle(),
       supabase
         .from("shopping_items")
         .select("id, name, created_by, created_at, done, done_by, done_at")
@@ -33,7 +38,6 @@ async function Resumen() {
   return (
     <Dashboard
       userId={user.id}
-      displayName={displayName}
       householdName={household.name}
       inviteCode={household.invite_code}
       initialWidgets={me ? saved : DEFAULT_WIDGETS}
@@ -46,7 +50,7 @@ async function Resumen() {
 
 export default function Page() {
   return (
-    <Suspense>
+    <Suspense fallback={<PageSkeleton />}>
       <Resumen />
     </Suspense>
   );

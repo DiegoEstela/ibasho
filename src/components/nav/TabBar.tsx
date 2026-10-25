@@ -18,11 +18,11 @@ export function TabBar() {
               <Link
                 href={href}
                 aria-current={active ? "page" : undefined}
-                className={`flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] transition ${
+                className={`flex min-h-12 flex-col items-center justify-center gap-0.5 text-[10px] transition ${
                   active ? "text-forest" : "text-ink-soft"
                 }`}
               >
-                <Icon size={22} strokeWidth={active ? 2.25 : 1.75} />
+                <Icon size={20} strokeWidth={active ? 2.25 : 1.75} />
                 {label}
               </Link>
             </li>

@@ -1,6 +1,5 @@
 import { Suspense } from "react";
-import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { DIFFICULTIES } from "@/lib/cocina/labels";
 import { createRecipe } from "../actions";
 
@@ -26,12 +25,9 @@ export default function NuevaRecetaPage({
 }) {
   return (
     <section className="max-w-2xl lg:max-w-5xl">
-      <Link href="/cocina" className="inline-flex min-h-11 items-center gap-1 text-sm text-ink-soft">
-        <ChevronLeft size={18} /> Cocina
-      </Link>
-      <h1 className="font-display text-3xl font-bold">Nueva receta</h1>
+      <PageHeader title="Nueva receta" back="/cocina" />
 
-      <div className="mt-6">
+      <div className="mt-3 lg:mt-6">
         <Suspense>
           <ErrorMessage searchParams={searchParams} />
         </Suspense>

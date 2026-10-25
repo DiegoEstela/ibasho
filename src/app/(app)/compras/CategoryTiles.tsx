@@ -13,7 +13,7 @@ type Props = {
 /** Mosaico de categorías con icono y contador de productos pendientes. */
 export function CategoryTiles({ categories, counts, selected, onSelect, onCreate }: Props) {
   return (
-    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-3">
+    <div className="grid grid-cols-4 gap-2 sm:grid-cols-5 lg:grid-cols-3 lg:gap-3">
       {categories.map((cat) => {
         const Icon = iconFor(cat.icon);
         const color = colorFor(cat.color);
@@ -25,38 +25,38 @@ export function CategoryTiles({ categories, counts, selected, onSelect, onCreate
             key={cat.name}
             onClick={() => onSelect(active ? null : cat.name)}
             aria-pressed={active}
-            className={`relative flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl border p-3 text-center transition active:scale-95 ${
+            className={`relative flex min-h-[5.25rem] flex-col items-center justify-center gap-1.5 rounded-2xl border p-1.5 text-center lg:min-h-28 lg:gap-2 lg:rounded-3xl lg:p-3 transition active:scale-95 ${
               active ? "border-forest ring-2 ring-forest/40" : "border-line"
             } ${count === 0 ? "opacity-70" : ""}`}
             style={{ background: `color-mix(in srgb, ${color} 14%, var(--surface))` }}
           >
             {count > 0 && (
               <span
-                className="absolute right-2 top-2 flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-xs font-bold text-surface"
+                className="absolute right-1 top-1 flex min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-surface lg:right-2 lg:top-2 lg:min-w-6 lg:px-1.5 lg:py-0.5 lg:text-xs"
                 style={{ background: color }}
               >
                 {count}
               </span>
             )}
             <span
-              className="flex size-12 items-center justify-center rounded-2xl"
+              className="flex size-9 items-center justify-center rounded-xl lg:size-12 lg:rounded-2xl"
               style={{ background: `color-mix(in srgb, ${color} 24%, transparent)`, color }}
             >
-              <Icon size={26} strokeWidth={1.75} />
+              <Icon className="size-5 lg:size-6" strokeWidth={1.75} />
             </span>
-            <span className="text-xs font-medium leading-tight text-ink">{cat.name}</span>
+            <span className="text-[10px] font-medium leading-tight text-ink lg:text-xs">{cat.name}</span>
           </button>
         );
       })}
 
       <button
         onClick={onCreate}
-        className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl border border-dashed border-ink-soft/40 p-3 text-ink-soft transition active:scale-95"
+        className="flex min-h-[5.25rem] flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-ink-soft/40 p-1.5 text-ink-soft lg:min-h-28 lg:gap-2 lg:rounded-3xl lg:p-3 transition active:scale-95"
       >
-        <span className="flex size-12 items-center justify-center rounded-2xl bg-washi-deep">
-          <Plus size={24} />
+        <span className="flex size-9 items-center justify-center rounded-xl bg-washi-deep lg:size-12 lg:rounded-2xl">
+          <Plus className="size-5 lg:size-6" />
         </span>
-        <span className="text-xs font-medium">Nueva</span>
+        <span className="text-[10px] font-medium lg:text-xs">Nueva</span>
       </button>
     </div>
   );

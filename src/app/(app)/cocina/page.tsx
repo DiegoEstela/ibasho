@@ -1,11 +1,13 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { Clock, Heart, Plus } from "lucide-react";
-import { requireHousehold } from "@/lib/household";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { PageSkeleton } from "@/components/ui/PageSkeleton";
+import { createClient } from "@/lib/supabase/server";
 import { difficultyLabel } from "@/lib/cocina/labels";
 
 async function RecipeList() {
-  const { supabase } = await requireHousehold();
+  const supabase = await createClient();
   const { data: recipes } = await supabase
     .from("recipes")
     .select("id, name, prep_minutes, difficulty, tags, is_favorite")
@@ -13,7 +15,7 @@ async function RecipeList() {
 
   if (!recipes?.length) {
     return (
-      <div className="mt-6 rounded-2xl border border-dashed border-line bg-surface/60 p-8 text-center">
+      <div className="mt-3 rounded-2xl border border-dashed border-line bg-surface/60 p-6 text-center lg:mt-6 lg:p-8">
         <p className="font-display text-lg font-bold">Aún no hay recetas</p>
         <p className="mt-1 text-sm text-ink-soft">Guarden su primer plato y lo tendrán siempre a mano.</p>
         <Link
@@ -27,18 +29,18 @@ async function RecipeList() {
   }
 
   return (
-    <ul className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <ul className="mt-3 grid gap-2.5 sm:grid-cols-2 lg:mt-6 lg:gap-3 xl:grid-cols-3">
       {recipes.map((r) => (
         <li key={r.id}>
           <Link
             href={`/cocina/${r.id}`}
-            className="block rounded-2xl border border-line bg-surface p-4 transition active:scale-[0.99]"
+            className="block rounded-2xl border border-line bg-surface p-3 transition active:scale-[0.99] lg:p-4"
           >
             <div className="flex items-start justify-between gap-3">
-              <h2 className="font-display text-lg font-bold leading-snug">{r.name}</h2>
+              <h2 className="font-display text-base font-bold leading-snug lg:text-lg">{r.name}</h2>
               {r.is_favorite && <Heart size={18} className="shrink-0 fill-hanko text-hanko" />}
             </div>
-            <p className="mt-2 flex items-center gap-3 text-sm text-ink-soft">
+            <p className="mt-1.5 flex items-center gap-3 text-xs text-ink-soft lg:mt-2 lg:text-sm">
               {r.prep_minutes != null && (
                 <span className="flex items-center gap-1">
                   <Clock size={14} /> {r.prep_minutes} min
@@ -65,16 +67,18 @@ async function RecipeList() {
 export default function CocinaPage() {
   return (
     <section>
-      <div className="flex items-end justify-between gap-4">
-        <h1 className="font-display text-3xl font-bold lg:text-4xl">Cocina</h1>
-        <Link
-          href="/cocina/nueva"
-          className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-forest px-5 text-sm font-medium text-surface shadow-sm transition active:scale-95"
-        >
-          <Plus size={18} /> Nueva receta
-        </Link>
-      </div>
-      <Suspense fallback={<p className="mt-6 text-ink-soft">Cargando recetas…</p>}>
+      <PageHeader
+        title="Cocina"
+        actions={
+          <Link
+            href="/cocina/nueva"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-forest px-3.5 text-sm font-medium text-surface shadow-sm transition active:scale-95 lg:min-h-11 lg:rounded-2xl lg:px-5"
+          >
+            <Plus size={16} /> Nueva receta
+          </Link>
+        }
+      />
+      <Suspense fallback={<PageSkeleton />}>
         <RecipeList />
       </Suspense>
     </section>

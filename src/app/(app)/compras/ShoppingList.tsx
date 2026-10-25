@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Check, ChevronDown, LayoutGrid, List, Pencil, Plus, ShoppingBasket, Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { SwipeRow } from "@/components/ui/SwipeRow";
 import { CATEGORIES, DEFAULT_CATEGORY_STYLE, classify, type Category } from "@/lib/compras/categories";
 import { colorFor, iconFor } from "@/lib/compras/icons";
@@ -79,7 +80,7 @@ const key = (s: string) => s.trim().toLowerCase();
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const field =
-  "min-h-12 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest";
+  "min-h-11 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest";
 
 export function ShoppingList({ householdId, userId, initialItems, initialProducts, initialCategories, members }: Props) {
   const [supabase] = useState(() => createClient());
@@ -453,38 +454,44 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
 
   return (
     <section className="max-w-[1500px]">
-      <h1 className="font-display text-3xl font-bold lg:text-4xl">Compras</h1>
-      <p className="mt-1 text-ink-soft" aria-live="polite">
-        {pending.length === 0
-          ? "Todo comprado"
-          : pending.length === 1
-            ? "Falta 1 producto"
-            : `Faltan ${pending.length} productos`}
-      </p>
-
-      <div className="mt-4 flex w-fit gap-1 rounded-xl bg-washi-deep p-1 lg:hidden" role="tablist" aria-label="Vista">
-        {(
-          [
-            ["lista", "Lista", List],
-            ["categorias", "Categorías", LayoutGrid],
-          ] as const
-        ).map(([value, label, Icon]) => (
-          <button
-            key={value}
-            role="tab"
-            aria-selected={view === value}
-            onClick={() => changeView(value)}
-            className={`flex min-h-10 items-center gap-2 rounded-lg px-4 text-sm font-medium transition ${
-              view === value ? "bg-surface text-forest shadow-sm" : "text-ink-soft"
-            }`}
-          >
-            <Icon size={16} /> {label}
-          </button>
-        ))}
-      </div>
+      <PageHeader
+        title="Compras"
+        subtitle={
+          <span aria-live="polite">
+            {pending.length === 0
+              ? "Todo comprado"
+              : pending.length === 1
+                ? "Falta 1 producto"
+                : `Faltan ${pending.length} productos`}
+          </span>
+        }
+        actions={
+          <div className="flex gap-0.5 rounded-xl bg-washi-deep p-1 lg:hidden" role="tablist" aria-label="Vista">
+            {(
+              [
+                ["lista", "Lista", List],
+                ["categorias", "Categorías", LayoutGrid],
+              ] as const
+            ).map(([value, label, Icon]) => (
+              <button
+                key={value}
+                role="tab"
+                aria-selected={view === value}
+                aria-label={label}
+                onClick={() => changeView(value)}
+                className={`flex size-9 items-center justify-center rounded-lg transition ${
+                  view === value ? "bg-surface text-forest shadow-sm" : "text-ink-soft"
+                }`}
+              >
+                <Icon size={18} />
+              </button>
+            ))}
+          </div>
+        }
+      />
 
       {/* Campo siempre visible */}
-      <div className="sticky top-0 z-10 -mx-5 bg-background/90 px-5 pb-3 pt-4 backdrop-blur lg:-mx-10 lg:px-10">
+      <div className="sticky top-[env(safe-area-inset-top)] z-10 -mx-4 bg-background/90 px-4 pb-2 pt-1 backdrop-blur lg:-mx-10 lg:px-10 lg:pb-3 lg:pt-4">
         <form onSubmit={submit} className="relative flex gap-2 lg:max-w-3xl">
           <input
             ref={inputRef}
@@ -500,7 +507,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
           />
           <button
             aria-label="Añadir"
-            className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-forest text-surface shadow-sm transition active:scale-95"
+            className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-forest text-surface shadow-sm transition active:scale-95"
           >
             <Plus size={22} />
           </button>
@@ -514,7 +521,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => pick(s)}
-                className="flex min-h-9 shrink-0 items-center gap-1 rounded-full border border-line bg-surface px-3.5 text-sm text-ink transition active:scale-95"
+                className="flex min-h-8 shrink-0 items-center gap-1 rounded-full border border-line bg-surface px-3 text-[13px] text-ink transition active:scale-95"
               >
                 <Plus size={14} className="text-forest" /> {s}
               </button>
@@ -523,7 +530,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
         )}
       </div>
 
-      <div className="mt-2 flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_1fr] lg:gap-x-10 xl:grid-cols-[minmax(0,1fr)_26rem]">
+      <div className="mt-1 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_1fr] lg:gap-x-10 xl:grid-cols-[minmax(0,1fr)_26rem]">
         {/* Mosaico de categorías: pestaña en teléfono, panel lateral en escritorio */}
         <div className={`${view === "categorias" ? "" : "hidden"} lg:col-start-2 lg:row-start-1 lg:block`}>
           <h2 className="mb-3 hidden font-display text-xl font-bold lg:block">Categorías</h2>
@@ -603,13 +610,13 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
               </p>
             </div>
           ) : (
-            <div className="flex flex-col gap-5 lg:block lg:columns-2 lg:gap-6 2xl:columns-3">
+            <div className="flex flex-col gap-3 lg:block lg:columns-2 lg:gap-6 2xl:columns-3">
               {visibleGroups.map(([category, list]) => {
                 const meta = metaOf(category);
                 const Icon = iconFor(meta.icon);
                 return (
                   <div key={category} className="lg:mb-6 lg:break-inside-avoid">
-                    <h2 className="mb-1.5 flex items-center gap-2 px-2 text-xs font-medium uppercase tracking-wider text-ink-soft">
+                    <h2 className="mb-1 flex items-center gap-1.5 px-2 text-[11px] font-medium uppercase tracking-wider text-ink-soft lg:mb-1.5 lg:gap-2 lg:text-xs">
                       <Icon size={14} style={{ color: colorFor(meta.color) }} />
                       {category}
                     </h2>
@@ -636,19 +643,19 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
               className={`${showDone ? "" : "hidden"} divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface lg:block`}
             >
               {recentDone.map((item) => (
-                <li key={item.id} className="flex min-h-14 items-center">
+                <li key={item.id} className="flex min-h-12 items-center">
                   <button
                     onClick={() => toggle(item)}
                     aria-label={`Devolver «${item.name}» a la lista`}
-                    className="flex size-14 shrink-0 items-center justify-center"
+                    className="flex size-12 shrink-0 items-center justify-center"
                   >
-                    <span className="check-pop flex size-6 items-center justify-center rounded-full bg-forest text-surface">
+                    <span className="check-pop flex size-5 items-center justify-center rounded-full bg-forest text-surface">
                       <Check size={14} strokeWidth={3} />
                     </span>
                   </button>
-                  <div className="flex-1 py-2 pr-4">
-                    <span className="block text-ink-soft line-through">{item.name}</span>
-                    <span className="block text-xs text-ink-soft" suppressHydrationWarning>
+                  <div className="flex-1 py-1.5 pr-3">
+                    <span className="block text-[15px] text-ink-soft line-through">{item.name}</span>
+                    <span className="block text-[11px] text-ink-soft" suppressHydrationWarning>
                       {memberName(item.done_by)} · {item.done_at ? timeAgo(item.done_at, now) : ""}
                     </span>
                   </div>
@@ -812,21 +819,21 @@ function ItemRows({
       {list.map((item) => (
         <li key={item.id}>
           <SwipeRow onSwipeRight={() => onToggle(item)} onSwipeLeft={() => onRemove(item)} rightLabel="Comprado">
-            <div className="flex min-h-14 items-center">
+            <div className="flex min-h-12 items-center">
               <button
                 onClick={() => onToggle(item)}
                 aria-label={`Marcar «${item.name}» como comprado`}
-                className="flex size-14 shrink-0 items-center justify-center"
+                className="flex size-12 shrink-0 items-center justify-center"
               >
-                <span className="size-6 rounded-full border-2 border-ink-soft/50" />
+                <span className="size-5 rounded-full border-2 border-ink-soft/50" />
               </button>
-              <button onClick={() => onEdit(item)} className="min-h-14 flex-1 py-2 pr-4 text-left">
-                <span className="block text-base">
+              <button onClick={() => onEdit(item)} className="min-h-12 flex-1 py-1.5 pr-3 text-left">
+                <span className="block text-[15px] leading-snug">
                   {item.name}
-                  {item.quantity && <span className="ml-2 text-sm text-forest">{item.quantity}</span>}
+                  {item.quantity && <span className="ml-2 text-xs text-forest">{item.quantity}</span>}
                 </span>
                 {(item.note || item.store) && (
-                  <span className="block text-sm text-ink-soft">{[item.store, item.note].filter(Boolean).join(" · ")}</span>
+                  <span className="block text-xs text-ink-soft">{[item.store, item.note].filter(Boolean).join(" · ")}</span>
                 )}
               </button>
             </div>
