@@ -4,36 +4,48 @@ import { revalidatePath } from "next/cache";
 import { EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
 import { ensureGroupId, syncParticipants } from "@/lib/gastos/setup";
 import { formatEUR, splitByPercent, toCents } from "@/lib/gastos/money";
-import { financedCents } from "@/lib/tarjetas/installments";
 import { cardLabel } from "@/lib/tarjetas/labels";
 import { requireHousehold } from "@/lib/household";
 
 type Result = { ok: true } | { ok: false; message: string };
 
-type PurchaseCard = { name: string; last4: string | null; owner_user_id: string | null };
+type PurchaseInfo = {
+  card_id: string;
+  description: string;
+  merchant: string | null;
+  installments_count: number;
+  total_amount: number;
+  interest_percent: number;
+  cards: { name: string; last4: string | null; owner_user_id: string | null } | null;
+};
 
 /**
- * Crea en Gastos compartidos el gasto de una compra con tarjeta, con todos sus datos:
- * concepto (y comercio), importe total con interés, fecha, tarjeta, quién pagó y el reparto de la compra.
+ * Registra en Gastos compartidos UNA cuota de una compra con tarjeta, con todos sus datos:
+ * el importe de esa cuota, el concepto («Televisor · cuota 3/12»), la tarjeta, quién pagó y el reparto de la compra.
  */
-export async function sendPurchaseToExpenses(purchaseId: string, category: string): Promise<Result> {
+export async function sendInstallmentToExpenses(installmentId: string, category: string, date: string): Promise<Result> {
   const { supabase, user, household } = await requireHousehold();
   const chosenCategory = EXPENSE_CATEGORIES.some((c) => c.name === category) ? category : "Otros";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, message: "La fecha no es válida." };
 
-  const { data: purchase } = await supabase
-    .from("card_purchases")
-    .select("id, card_id, description, merchant, purchase_date, total_amount, interest_percent, installments_count, expense_id, cards(name, last4, owner_user_id)")
-    .eq("id", purchaseId)
+  const { data: installment } = await supabase
+    .from("card_installments")
+    .select(
+      "id, purchase_id, number, amount, expense_id, card_purchases(card_id, description, merchant, installments_count, total_amount, interest_percent, cards(name, last4, owner_user_id))",
+    )
+    .eq("id", installmentId)
     .maybeSingle();
-  if (!purchase) return { ok: false, message: "No encontramos esa compra." };
-  if (purchase.expense_id) return { ok: false, message: "Esta compra ya está en Gastos compartidos." };
+  if (!installment) return { ok: false, message: "No encontramos esa cuota." };
+  if (installment.expense_id) return { ok: false, message: "Esta cuota ya está en Gastos compartidos." };
 
-  const [{ data: shares }, { data: members }, { data: profiles }, { data: group }, { data: firstInstallment }] = await Promise.all([
-    supabase.from("card_purchase_shares").select("user_id, percent").eq("purchase_id", purchaseId),
+  const purchase = installment.card_purchases as unknown as PurchaseInfo | null;
+  if (!purchase) return { ok: false, message: "No encontramos la compra de esta cuota." };
+
+  const [{ data: shares }, { data: members }, { data: profiles }, { data: group }] = await Promise.all([
+    supabase.from("card_purchase_shares").select("user_id, percent").eq("purchase_id", installment.purchase_id),
     supabase.from("household_members").select("user_id").order("joined_at"),
     supabase.from("profiles").select("id, display_name, color"),
     supabase.from("expense_groups").select("id").eq("kind", "household").maybeSingle(),
-    supabase.from("card_installments").select("amount").eq("purchase_id", purchaseId).eq("number", 1).maybeSingle(),
   ]);
 
   if ((members?.length ?? 0) < 2) return { ok: false, message: "Los gastos compartidos necesitan a tu pareja dentro del hogar." };
@@ -54,8 +66,7 @@ export async function sendPurchaseToExpenses(purchaseId: string, category: strin
   const participantOf = (userId: string) => synced.participants.find((p) => p.user_id === userId);
 
   // Quien pagó es el titular de la tarjeta. Si la tarjeta es compartida no hay un pagador: sale del dinero de los dos.
-  const card = purchase.cards as unknown as PurchaseCard | null;
-  const ownerId = card?.owner_user_id ?? null;
+  const ownerId = purchase.cards?.owner_user_id ?? null;
   const payer = ownerId ? (participantOf(ownerId) ?? participantOf(user.id)) : null;
   if (ownerId && !payer) return { ok: false, message: "No se encontró a quien pagó la compra." };
 
@@ -66,38 +77,34 @@ export async function sendPurchaseToExpenses(purchaseId: string, category: strin
   }
   if (Object.keys(percents).length === 0) return { ok: false, message: "La compra no tiene reparto." };
 
-  const totalCents = financedCents(toCents(Number(purchase.total_amount)), Number(purchase.interest_percent));
-  const parts = splitByPercent(totalCents, percents);
+  const cents = toCents(Number(installment.amount));
+  const parts = splitByPercent(cents, percents);
 
-  // El comercio va en el concepto; las cuotas, el interés y la tarjeta quedan en las notas.
   const count = Number(purchase.installments_count);
-  const interest = Number(purchase.interest_percent);
+  const label = count === 1 ? "pago único" : `cuota ${installment.number}/${count}`;
+  const base = purchase.merchant ? `${purchase.description} · ${purchase.merchant}` : purchase.description;
   const notes = [
-    `Compra con tarjeta${card ? ` ${cardLabel(card)}` : ""}.`,
-    count === 1
-      ? "Pago único."
-      : `${count} cuotas${firstInstallment ? ` de ${formatEUR(toCents(Number(firstInstallment.amount)))}` : ""}.`,
-    interest > 0 ? `Total con ${String(interest).replace(".", ",")} % de interés: ${formatEUR(totalCents)}.` : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
+    `${count === 1 ? "Pago" : `Cuota ${installment.number} de ${count}`} de «${purchase.description}»`,
+    purchase.cards ? ` con la tarjeta ${cardLabel(purchase.cards)}.` : ".",
+    ` Total de la compra: ${formatEUR(toCents(Number(purchase.total_amount) * (1 + Number(purchase.interest_percent) / 100)))}.`,
+  ].join("");
 
   const { data: expenseId, error } = await supabase.rpc("save_expense", {
     p_id: null,
     p_group: ensured.groupId,
-    p_description: purchase.merchant ? `${purchase.description} · ${purchase.merchant}` : purchase.description,
-    p_amount: totalCents / 100,
-    p_date: purchase.purchase_date,
+    p_description: `${base} · ${label}`,
+    p_amount: cents / 100,
+    p_date: date,
     p_category: chosenCategory,
     p_paid_by: payer?.id ?? null,
     p_card: purchase.card_id,
-    p_splits: Object.entries(parts).map(([participant_id, cents]) => ({ participant_id, amount: cents / 100 })),
+    p_splits: Object.entries(parts).map(([participant_id, c]) => ({ participant_id, amount: c / 100 })),
   });
   if (error || !expenseId) return { ok: false, message: "No se pudo crear el gasto. Inténtalo de nuevo." };
 
   await supabase.from("expenses").update({ notes }).eq("id", expenseId);
 
-  const { error: linkError } = await supabase.from("card_purchases").update({ expense_id: expenseId }).eq("id", purchaseId);
+  const { error: linkError } = await supabase.from("card_installments").update({ expense_id: expenseId }).eq("id", installmentId);
   if (linkError) {
     // Sin el enlace, un reintento duplicaría el gasto: se deshace para dejarlo como estaba.
     await supabase.from("expenses").delete().eq("id", expenseId);

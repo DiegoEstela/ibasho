@@ -2,12 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Compass, Download } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
-import { navItems } from "./items";
+import { useInstall } from "@/components/pwa/InstallProvider";
+import { SignOutButton } from "./SignOutButton";
+import { navModules } from "./items";
 
-/** Navegación lateral para escritorio (lg y superior). */
+/** Navegación lateral para escritorio (lg y superior): todos los módulos a la vista. */
 export function Sidebar() {
   const pathname = usePathname();
+  const install = useInstall();
 
   return (
     <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r border-line bg-surface/70 px-4 py-6 backdrop-blur lg:flex">
@@ -19,8 +23,21 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="mt-8 flex flex-col gap-1">
-        {navItems.map(({ href, label, icon: Icon }) => {
+      <nav aria-label="Módulos" className="mt-8 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+        {navModules.map(({ href, label, icon: Icon, available }) => {
+          if (!available) {
+            return (
+              <span
+                key={href}
+                aria-disabled="true"
+                className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-ink-soft/60"
+              >
+                <Icon size={20} strokeWidth={1.75} />
+                <span className="flex-1 text-sm font-medium">{label}</span>
+                <span className="rounded-full bg-washi-deep px-2 py-0.5 text-[10px] font-medium text-ink-soft">Pronto</span>
+              </span>
+            );
+          }
           const active = pathname.startsWith(href);
           return (
             <Link
@@ -28,9 +45,7 @@ export function Sidebar() {
               href={href}
               aria-current={active ? "page" : undefined}
               className={`flex min-h-11 items-center gap-3 rounded-xl px-3 transition ${
-                active
-                  ? "bg-forest/15 text-forest"
-                  : "text-ink-soft hover:bg-washi-deep hover:text-ink"
+                active ? "bg-forest/15 text-forest" : "text-ink-soft hover:bg-washi-deep hover:text-ink"
               }`}
             >
               <Icon size={20} strokeWidth={1.75} />
@@ -39,6 +54,26 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      <div className="mt-3 flex flex-col gap-1 border-t border-line pt-3">
+        {!install.installed && install.canPrompt && (
+          <button
+            onClick={install.open}
+            className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium text-forest transition hover:bg-washi-deep"
+          >
+            <Download size={20} strokeWidth={1.75} />
+            Instalar la app
+          </button>
+        )}
+        <Link
+          href="/bienvenida"
+          className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm text-ink-soft transition hover:bg-washi-deep hover:text-ink"
+        >
+          <Compass size={20} strokeWidth={1.75} />
+          Ver guía de la app
+        </Link>
+        <SignOutButton variant="row" />
+      </div>
     </aside>
   );
 }

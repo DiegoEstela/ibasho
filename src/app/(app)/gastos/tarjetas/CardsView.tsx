@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, CreditCard, Plus, Receipt } from "lucide-react";
+import { CreditCard, Plus } from "lucide-react";
 import { GastosTabs } from "@/components/ui/GastosTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { colorFor } from "@/lib/compras/icons";
@@ -14,7 +14,7 @@ import { personCents, purchaseStats, type PurchaseStats } from "@/lib/tarjetas/s
 import { formatDate } from "../types";
 import { DepositDetailSheet } from "../DepositDetailSheet";
 import { DepositSheet } from "../DepositSheet";
-import { sendPurchaseToExpenses } from "./actions";
+import { sendInstallmentToExpenses } from "./actions";
 import { CardSheet } from "./CardSheet";
 import { DebitPanel } from "./DebitPanel";
 import { AddCardTile, CardTile } from "./CardTile";
@@ -85,8 +85,9 @@ export function CardsView({
   const [detailId, setDetailId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendMessage, setSendMessage] = useState("");
-  const [sendId, setSendId] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
+  const [sendInstallmentId, setSendInstallmentId] = useState<string | null>(null);
+  const [detailNotice, setDetailNotice] = useState("");
+  const [notice, setNotice] = useState<{ text: string; link: boolean } | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const me = people.find((p) => p.id === userId);
@@ -98,7 +99,7 @@ export function CardsView({
       supabase.from("cards").select("*").eq("archived", false).order("created_at"),
       supabase.from("card_purchases").select("*").order("purchase_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
       supabase.from("card_purchase_shares").select("purchase_id, user_id, percent").limit(5000),
-      supabase.from("card_installments").select("id, purchase_id, number, due_date, amount, manual_paid").limit(20000),
+      supabase.from("card_installments").select("id, purchase_id, number, due_date, amount, manual_paid, expense_id").limit(20000),
       supabase.from("card_deposits").select("*").order("deposit_date", { ascending: false }).limit(2000),
       supabase.from("expenses").select("id, card_id, description, amount, expense_date, paid_by, created_at").not("card_id", "is", null).limit(5000),
     ]);
@@ -245,9 +246,11 @@ export function CardsView({
       .filter((x) => x.purchase && x.cents > 0);
   }, [month, projectionRows, today, currentMonth, purchases, amountFor]);
 
+  const sendInstallment = installments.find((i) => i.id === sendInstallmentId);
+  const sendPurchase = purchases.find((p) => p.id === sendInstallment?.purchase_id);
+
   const detail = purchases.find((p) => p.id === detailId) ?? null;
   const detailShares = shares.filter((s) => s.purchase_id === detailId);
-  const detailCanSend = people.length > 1 && detailShares.filter((s) => Number(s.percent) > 0).length >= 1;
 
   // ---------- Acciones ----------
   async function setPaid(inst: Installment, value: boolean | null) {
@@ -264,24 +267,34 @@ export function CardsView({
     if (error) refetch();
   }
 
-  function requestSend(purchase: Purchase) {
-    setSendMessage("");
-    setSendId(purchase.id);
+  function showNotice(text: string, link = false) {
+    clearTimeout(noticeTimer.current);
+    setNotice({ text, link });
+    noticeTimer.current = setTimeout(() => setNotice(null), 5000);
   }
 
-  async function confirmSend(category: string) {
-    if (!sendId) return;
+  function requestSend(installment: Installment) {
+    setSendMessage("");
+    // Con una sola persona en el hogar no hay con quién compartir el gasto: se explica en vez de ocultar la opción.
+    if (people.length < 2) {
+      setDetailNotice("Esta opción estará disponible cuando tu pareja se una al hogar.");
+      return;
+    }
+    setDetailNotice("");
+    setSendInstallmentId(installment.id);
+  }
+
+  async function confirmSend(category: string, date: string) {
+    if (!sendInstallmentId) return;
+    const installment = installments.find((i) => i.id === sendInstallmentId);
     setSending(true);
     setSendMessage("");
-    const result = await sendPurchaseToExpenses(sendId, category);
+    const result = await sendInstallmentToExpenses(sendInstallmentId, category, date);
     setSending(false);
     if (!result.ok) return setSendMessage(result.message);
-    setSendId(null);
-    setDetailId(null);
+    setSendInstallmentId(null);
     refetch();
-    clearTimeout(noticeTimer.current);
-    setNotice("Listo: la compra ya está en Gastos compartidos.");
-    noticeTimer.current = setTimeout(() => setNotice(""), 5000);
+    showNotice(`Listo: la cuota ${installment?.number ?? ""} ya está en Gastos compartidos.`, true);
   }
 
   const onCardSaved = () => {
@@ -466,7 +479,7 @@ export function CardsView({
                     const mine = person ? pendingOf(p.id, person) : null;
                     return (
                       <li key={p.id}>
-                        <button onClick={() => setDetailId(p.id)} className="block w-full px-3 py-2.5 text-left">
+                        <button onClick={() => { setDetailNotice(""); setDetailId(p.id); }} className="block w-full px-3 py-2.5 text-left">
                           <span className="flex items-center gap-3">
                             <span
                               className="flex size-9 shrink-0 items-center justify-center rounded-xl"
@@ -500,23 +513,6 @@ export function CardsView({
                           </span>
                         </button>
 
-                        {/* Acción visible: llevar la compra a Gastos compartidos */}
-                        {people.length > 1 && (
-                          <div className="flex justify-end px-3 pb-2.5 -mt-0.5">
-                            {p.expense_id ? (
-                              <span className="flex items-center gap-1.5 text-[11px] text-forest">
-                                <Check size={13} /> En Gastos compartidos
-                              </span>
-                            ) : (
-                              <button
-                                onClick={() => requestSend(p)}
-                                className="flex min-h-8 items-center gap-1.5 rounded-lg bg-forest/10 px-3 text-xs font-medium text-forest transition active:scale-95"
-                              >
-                                <Receipt size={13} /> Agregar a gastos
-                              </button>
-                            )}
-                          </div>
-                        )}
                       </li>
                     );
                   })}
@@ -583,7 +579,8 @@ export function CardsView({
         shares={detailShares}
         installments={installments.filter((i) => i.purchase_id === detailId)}
         today={today}
-        canSend={detailCanSend}
+        alone={people.length < 2}
+        notice={detailNotice}
         onClose={() => setDetailId(null)}
         onToggle={(inst, paid) => setPaid(inst, paid)}
         onAuto={(inst) => setPaid(inst, null)}
@@ -592,14 +589,16 @@ export function CardsView({
       />
 
       <SendToExpensesSheet
-        purchase={purchases.find((p) => p.id === sendId) ?? null}
-        card={cards.find((c) => c.id === purchases.find((p) => p.id === sendId)?.card_id)}
+        installment={sendInstallment ?? null}
+        purchase={sendPurchase}
+        card={cards.find((c) => c.id === sendPurchase?.card_id)}
         people={people}
-        shares={shares.filter((s) => s.purchase_id === sendId)}
+        shares={shares.filter((s) => s.purchase_id === sendPurchase?.id)}
         userId={userId}
+        today={today}
         sending={sending}
         message={sendMessage}
-        onClose={() => setSendId(null)}
+        onClose={() => setSendInstallmentId(null)}
         onConfirm={confirmSend}
       />
 
@@ -608,8 +607,8 @@ export function CardsView({
           role="status"
           className="fixed inset-x-4 bottom-24 z-40 mx-auto flex max-w-sm items-center justify-between gap-3 rounded-2xl bg-ink px-4 py-3 text-sm text-background shadow-lg lg:bottom-8"
         >
-          <span>{notice}</span>
-          <Link href="/gastos" className="min-h-9 shrink-0 py-2 font-medium text-sakura">Ver</Link>
+          <span>{notice.text}</span>
+          {notice.link && <Link href="/gastos" className="min-h-9 shrink-0 py-2 font-medium text-sakura">Ver</Link>}
         </div>
       )}
     </section>

@@ -47,7 +47,7 @@ const slides = [
       <InfoSlide
         icon={Mail}
         tone="sakura"
-        badge="Próximamente"
+        badge="Disponible"
         title="Un detalle cada día"
         text="Escribe una notita para tu pareja. Aparecerá al abrir la app: un gesto pequeño que alegra el día."
       />

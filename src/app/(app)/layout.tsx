@@ -1,6 +1,8 @@
 import { Suspense } from "react";
 import { Sidebar } from "@/components/nav/Sidebar";
 import { TabBar } from "@/components/nav/TabBar";
+import { NoteReveal } from "@/components/notitas/NoteReveal";
+import { InstallProvider } from "@/components/pwa/InstallProvider";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { requireHousehold } from "@/lib/household";
 
@@ -10,9 +12,16 @@ async function Gate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** Aviso de notitas nuevas: se monta una vez y permanece mientras se navega por la app. */
+async function Notitas() {
+  const { user, household } = await requireHousehold();
+  return <NoteReveal userId={user.id} householdId={household.id} />;
+}
+
 /** Móvil: contenido + tab bar inferior. Escritorio: sidebar fija y contenido a pantalla completa. */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
+    <InstallProvider>
     <div className="min-h-dvh">
       <Suspense>
         <Sidebar />
@@ -25,6 +34,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <Suspense>
         <TabBar />
       </Suspense>
+      <Suspense>
+        <Notitas />
+      </Suspense>
     </div>
+    </InstallProvider>
   );
 }

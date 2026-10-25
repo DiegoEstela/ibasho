@@ -12,6 +12,7 @@ import { timeAgo } from "@/lib/utils/time";
 import { MIN_SLOTS, WIDGETS, type WidgetDef, type WidgetId } from "./catalog";
 
 export type Stats = {
+  mensajes: { hasPartner: boolean; unread: number; latest: { body: string; from: string } | null };
   tarjeta: { hasData: boolean; pendingCents: number; nextDue: string | null; nextCents: number };
   gastos: { state: "none" | "even" | "owe" | "owed"; cents: number; name: string | null };
   pendingCount: number;
@@ -338,6 +339,9 @@ function WidgetCard({
     );
   }
 
+  // Un módulo que aún no existe no lleva a ninguna parte: la tarjeta solo informa.
+  if (!def.available) return body;
+
   return (
     <Link href={def.href} className="block transition active:scale-[0.98]">
       {body}
@@ -372,6 +376,25 @@ function WidgetBody({ def, stats }: { def: WidgetDef; stats: Stats }) {
             ? `${stats.favoritesCount} ${stats.favoritesCount === 1 ? "favorita" : "favoritas"}`
             : `Última: ${stats.lastRecipe}`}
         </p>
+      </>
+    );
+  }
+
+  if (def.id === "mensajes") {
+    const m = stats.mensajes;
+    if (!m.hasPartner) return <p className="mt-auto text-sm text-ink-soft">Invita a tu pareja para dejarse notitas.</p>;
+    if (!m.latest) return <p className="mt-auto text-sm text-ink-soft">Escribe la primera notita para tu pareja.</p>;
+    return (
+      <>
+        {m.unread > 0 && (
+          <span className="mb-1.5 w-fit rounded-full bg-hanko px-2 py-0.5 text-[11px] font-bold text-white">
+            {m.unread === 1 ? "1 nueva" : `${m.unread} nuevas`}
+          </span>
+        )}
+        <p className="line-clamp-3 text-[15px] leading-snug" style={{ fontFamily: "var(--font-note)" }}>
+          «{m.latest.body}»
+        </p>
+        <p className="mt-auto truncate pt-2 text-xs text-ink-soft">— {m.latest.from}</p>
       </>
     );
   }

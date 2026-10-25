@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Zen_Maru_Gothic } from "next/font/google";
+import { Klee_One, Zen_Maru_Gothic } from "next/font/google";
 import { RegisterServiceWorker } from "@/components/pwa/RegisterServiceWorker";
 import "./globals.css";
 
@@ -8,6 +8,14 @@ const zenMaru = Zen_Maru_Gothic({
   weight: ["400", "500", "700"],
   // Los kanji se cargan bajo demanda por unicode-range; solo se precarga latin.
   subsets: ["latin"],
+  display: "swap",
+});
+
+// Letra manuscrita de papelería japonesa, solo para el texto de las notitas.
+const kleeOne = Klee_One({
+  variable: "--font-klee",
+  weight: ["400", "600"],
+  subsets: ["latin", "latin-ext"],
   display: "swap",
 });
 
@@ -34,7 +42,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="es" className={`${zenMaru.variable} h-full antialiased`}>
+    <html lang="es" className={`${zenMaru.variable} ${kleeOne.variable} h-full antialiased`}>
       <body className="min-h-full">
         {children}
         <RegisterServiceWorker />

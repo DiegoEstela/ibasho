@@ -38,6 +38,8 @@ export type Installment = {
   due_date: string;
   amount: number;
   manual_paid: boolean | null;
+  /** Gasto compartido creado a partir de esta cuota; nulo si aún no se envió. */
+  expense_id: string | null;
 };
 
 /** Persona del hogar (con o sin perfil completo). */

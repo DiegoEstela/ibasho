@@ -54,6 +54,7 @@
   --color-line: var(--line);
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   --font-display: var(--font-zen-maru), var(--font-sans);
+  --font-note: var(--font-klee), var(--font-zen-maru), var(--font-sans);
 }
 
 body {
@@ -119,4 +120,43 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .sheet-panel, .sheet-backdrop, .check-pop { animation: none; }
+}
+
+/* ===== Notitas ===== */
+
+/* Sobre que se abre y carta que sube */
+@keyframes letter-rise {
+  0% { opacity: 0; transform: translateY(40px) scale(0.92) rotate(-2deg); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
+}
+@keyframes envelope-bob {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-6px) rotate(1deg); }
+}
+@keyframes petal-fall {
+  0% { transform: translate3d(0, -10vh, 0) rotate(0deg); opacity: 0; }
+  10% { opacity: 0.9; }
+  100% { transform: translate3d(var(--drift, 30px), 105vh, 0) rotate(540deg); opacity: 0; }
+}
+
+.letter-rise { animation: letter-rise 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.envelope-bob { animation: envelope-bob 3.2s ease-in-out infinite; }
+.petal { animation: petal-fall var(--dur, 7s) linear var(--delay, 0s) infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .letter-rise, .envelope-bob { animation: none; }
+  .petal { display: none; }
+}
+
+/* Panel de «Más» en el teléfono: crece desde la esquina inferior derecha hacia arriba */
+@keyframes menu-grow {
+  from { opacity: 0; transform: translateY(14px) scale(0.85); }
+  to { opacity: 1; transform: none; }
+}
+.menu-grow {
+  transform-origin: bottom right;
+  animation: menu-grow 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .menu-grow { animation: none; }
 }

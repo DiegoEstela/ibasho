@@ -14,7 +14,7 @@ async function Resumen() {
   const { data: claims } = await supabase.auth.getClaims();
   const userId = claims?.claims?.sub ?? "";
 
-  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements, cInstallments, cShares] =
+  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements, cInstallments, cShares, nNotes, nReads] =
     await Promise.all([
       requireHousehold(),
       supabase.from("shopping_items").select("name").eq("done", false).order("created_at", { ascending: false }).limit(200),
@@ -36,6 +36,8 @@ async function Resumen() {
       supabase.from("settlements").select("from_participant, to_participant, amount, expense_groups!inner(kind)").eq("expense_groups.kind", "household").limit(1000),
       supabase.from("card_installments").select("purchase_id, due_date, amount, manual_paid").limit(20000),
       supabase.from("card_purchase_shares").select("purchase_id, user_id, percent").limit(5000),
+      supabase.from("daily_messages").select("id, from_user, body, deliver_on, created_at").neq("from_user", userId).order("deliver_on", { ascending: false }).order("created_at", { ascending: false }).limit(30),
+      supabase.from("daily_message_reads").select("message_id").eq("user_id", userId),
     ]);
 
   // Si la migración 0004 aún no se ejecutó, la columna no existe y se usan los widgets por defecto.
@@ -89,7 +91,18 @@ async function Resumen() {
   }
   const tarjeta: Stats["tarjeta"] = { hasData: allInstallments.length > 0, pendingCents: cardPending, nextDue, nextCents };
 
+  // Notitas: la última que te dejaron y cuántas te faltan por abrir (si la migración 0008 no está, queda vacío).
+  const received = (nNotes.data ?? []) as { id: string; from_user: string; body: string }[];
+  const readIds = new Set((nReads.data ?? []).map((r) => r.message_id as string));
+  const sender = (id: string) => (profiles ?? []).find((p) => p.id === id)?.display_name || "Tu pareja";
+  const mensajes: Stats["mensajes"] = {
+    hasPartner: (profiles ?? []).length > 1,
+    unread: received.filter((n) => !readIds.has(n.id)).length,
+    latest: received[0] ? { body: received[0].body, from: sender(received[0].from_user) } : null,
+  };
+
   const stats: Stats = {
+    mensajes,
     tarjeta,
     gastos,
     pendingCount: pending?.length ?? 0,

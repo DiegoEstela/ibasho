@@ -16,12 +16,15 @@ type Props = {
   shares: Share[];
   installments: Installment[];
   today: string;
-  canSend: boolean;
+  /** El hogar tiene una sola persona: los gastos compartidos aún no están disponibles. */
+  alone: boolean;
+  /** Aviso a mostrar junto a las cuotas (por ejemplo, por qué no se pudo enviar una). */
+  notice: string;
   onClose: () => void;
   onToggle: (installment: Installment, paid: boolean) => void;
   onAuto: (installment: Installment) => void;
   onDelete: (purchase: Purchase) => void;
-  onRequestSend: (purchase: Purchase) => void;
+  onRequestSend: (installment: Installment) => void;
 };
 
 export function PurchaseDetail(props: Props) {
@@ -40,7 +43,8 @@ function Detail({
   shares,
   installments,
   today,
-  canSend,
+  alone,
+  notice,
   onToggle,
   onAuto,
   onDelete,
@@ -130,29 +134,34 @@ function Detail({
                   </button>
                 )}
                 <span className="text-[15px] font-medium">{formatEUR(toCents(inst.amount))}</span>
+                {inst.expense_id ? (
+                  <span className="ml-1 flex min-h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium text-forest" title="Ya está en Gastos compartidos">
+                    <Check size={13} /> En gastos
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => onRequestSend(inst)}
+                    aria-label={`Agregar la cuota ${inst.number} a Gastos compartidos`}
+                    aria-disabled={alone}
+                    className={`ml-1 flex min-h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] font-medium transition active:scale-95 ${
+                      alone ? "bg-washi-deep text-ink-soft" : "bg-forest/10 text-forest"
+                    }`}
+                  >
+                    <Receipt size={13} /> Gastos
+                  </button>
+                )}
               </li>
             );
           })}
         </ul>
+        {notice && (
+          <p role="alert" className="mt-2 rounded-xl bg-hanko/10 px-3 py-2.5 text-sm text-hanko">{notice}</p>
+        )}
         <p className="mt-1.5 px-1 text-xs text-ink-soft">
-          Las cuotas se marcan como pagadas solas cuando llega su fecha. Toca el círculo para corregirlo.
+          Las cuotas se marcan como pagadas solas cuando llega su fecha; toca el círculo para corregirlo. Con «Gastos» registras esa cuota en Gastos compartidos.
         </p>
       </div>
 
-      {purchase.expense_id ? (
-        <p className="flex items-center gap-2 rounded-xl bg-moss/15 px-3 py-2.5 text-sm text-forest">
-          <Receipt size={16} /> Ya está en Gastos compartidos.
-        </p>
-      ) : (
-        canSend && (
-          <button
-            onClick={() => onRequestSend(purchase)}
-            className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-line bg-surface px-4 text-sm font-medium text-forest transition active:scale-95"
-          >
-            <Receipt size={16} /> Agregar a Gastos compartidos
-          </button>
-        )
-      )}
       {confirmDelete ? (
         <button onClick={() => onDelete(purchase)} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-hanko/10 px-3 text-sm font-medium text-hanko">
           <Trash2 size={16} /> Sí, eliminar la compra y sus cuotas
