@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Banknote, Download, Plus, Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { CatIcon } from "@/components/ui/CatIcon";
+import { GastosTabs } from "@/components/ui/GastosTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { colorFor } from "@/lib/compras/icons";
 import { createClient } from "@/lib/supabase/client";
@@ -273,6 +274,8 @@ export function ExpensesView({
           </>
         }
       />
+
+      <GastosTabs active="compartidos" />
 
       <div className="mt-1 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:grid-rows-[auto_1fr] lg:gap-x-10">
         {/* Balance */}

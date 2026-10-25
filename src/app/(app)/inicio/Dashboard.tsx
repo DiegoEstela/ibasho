@@ -12,6 +12,7 @@ import { timeAgo } from "@/lib/utils/time";
 import { MIN_SLOTS, WIDGETS, type WidgetDef, type WidgetId } from "./catalog";
 
 export type Stats = {
+  tarjeta: { hasData: boolean; pendingCents: number; nextDue: string | null; nextCents: number };
   gastos: { state: "none" | "even" | "owe" | "owed"; cents: number; name: string | null };
   pendingCount: number;
   topPending: string[];
@@ -370,6 +371,21 @@ function WidgetBody({ def, stats }: { def: WidgetDef; stats: Stats }) {
           {stats.favoritesCount > 0
             ? `${stats.favoritesCount} ${stats.favoritesCount === 1 ? "favorita" : "favoritas"}`
             : `Última: ${stats.lastRecipe}`}
+        </p>
+      </>
+    );
+  }
+
+  if (def.id === "tarjeta") {
+    const t = stats.tarjeta;
+    if (!t.hasData) return <p className="mt-auto text-sm text-ink-soft">Agreguen su primera tarjeta.</p>;
+    if (t.pendingCents === 0) return <p className="mt-auto font-display text-lg font-bold">Sin cuotas pendientes</p>;
+    return (
+      <>
+        <p className="text-xs text-ink-soft">Te queda por pagar</p>
+        <p className="font-display text-3xl font-bold leading-none lg:text-4xl">{formatEUR(t.pendingCents)}</p>
+        <p className="mt-auto truncate pt-3 text-sm text-ink-soft">
+          {t.nextDue ? `Próximo pago ${t.nextDue.slice(8, 10)}/${t.nextDue.slice(5, 7)} · ${formatEUR(t.nextCents)}` : ""}
         </p>
       </>
     );

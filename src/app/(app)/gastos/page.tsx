@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import type { Participant } from "@/lib/gastos/balance";
+import { ensureGroupId, syncParticipants } from "@/lib/gastos/setup";
 import { requireHousehold } from "@/lib/household";
 import { createClient } from "@/lib/supabase/server";
 import { ExpensesView } from "./ExpensesView";
@@ -25,8 +26,6 @@ function Unavailable({ step, detail }: { step: string; detail: string }) {
   );
 }
 
-const PALETTE = ["#6f8f5e", "#c9704f", "#8fbfd4", "#f2b8c6", "#c8382f"];
-
 async function Gastos() {
   const supabase = await createClient();
 
@@ -45,52 +44,20 @@ async function Gastos() {
   // Con una sola persona no hay nada que repartir: se invita a la pareja.
   if ((members?.length ?? 0) < 2) return <InviteNeeded code={household.invite_code} householdName={household.name} />;
 
-  // El grupo de gastos del hogar se crea la primera vez.
-  let groupId = group?.id as string | undefined;
-  if (!groupId) {
-    const { data: created, error } = await supabase
-      .from("expense_groups")
-      .insert({ household_id: household.id, kind: "household", name: "Hogar" })
-      .select("id")
-      .single();
-    if (error) {
-      // Si los dos entran a la vez, el otro ya lo habrá creado: se vuelve a buscar.
-      const { data: again } = await supabase.from("expense_groups").select("id").eq("kind", "household").maybeSingle();
-      if (!again) return <Unavailable step="crear el grupo de gastos" detail={`${error.code}: ${error.message}`} />;
-      groupId = again.id as string;
-    } else {
-      groupId = created.id as string;
-    }
-  }
+  const ensured = await ensureGroupId(supabase, household.id, group?.id as string | undefined);
+  if ("error" in ensured) return <Unavailable {...ensured.error} />;
+  const groupId = ensured.groupId;
 
-  const loadParticipants = (id: string) =>
-    supabase.from("expense_participants").select("id, user_id, name, color").eq("group_id", id).order("created_at");
-
-  let participants = await loadParticipants(groupId);
-  if (participants.error) return <Unavailable step="leer los participantes" detail={`${participants.error.code}: ${participants.error.message}`} />;
-
-  // Cada miembro del hogar debe ser participante; se añaden los que falten (por ejemplo, quien acaba de unirse).
-  const known = new Set((participants.data ?? []).map((p) => p.user_id));
-  const missing = (members ?? []).filter((m) => !known.has(m.user_id));
-  if (missing.length > 0) {
-    const rows = missing.map((m, i) => {
-      const profile = profiles?.find((p) => p.id === m.user_id);
-      const fallback = m.user_id === user.id ? user.email.split("@")[0] : "";
-      return {
-        household_id: household.id,
-        group_id: groupId,
-        user_id: m.user_id,
-        name: profile?.display_name || fallback || "Alguien",
-        color: profile?.color || PALETTE[(known.size + i) % PALETTE.length],
-      };
-    });
-    const { error } = await supabase
-      .from("expense_participants")
-      .upsert(rows, { onConflict: "group_id,user_id", ignoreDuplicates: true });
-    if (error) return <Unavailable step="añadir a los participantes" detail={`${error.code}: ${error.message}`} />;
-    participants = await loadParticipants(groupId);
-    if (participants.error) return <Unavailable step="leer los participantes" detail={`${participants.error.code}: ${participants.error.message}`} />;
-  }
+  const synced = await syncParticipants(supabase, {
+    householdId: household.id,
+    groupId,
+    userId: user.id,
+    email: user.email,
+    members: members ?? [],
+    profiles: profiles ?? [],
+  });
+  if ("error" in synced) return <Unavailable {...synced.error} />;
+  const participants = { data: synced.participants };
 
   // Segunda ronda: movimientos del grupo.
   const [expenses, splits, settlements] = await Promise.all([

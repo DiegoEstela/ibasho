@@ -51,3 +51,16 @@ export function splitByPercent(total: number, percents: Record<string, number>):
   }
   return result;
 }
+
+/** Porcentajes iguales que suman exactamente 100 (el último absorbe el redondeo). */
+export function evenPercents(ids: string[]): Record<string, string> {
+  const base = Math.floor(10000 / ids.length) / 100;
+  const result: Record<string, string> = {};
+  let used = 0;
+  ids.forEach((id, i) => {
+    const value = i === ids.length - 1 ? Math.round((100 - used) * 100) / 100 : base;
+    used += value;
+    result[id] = String(value);
+  });
+  return result;
+}

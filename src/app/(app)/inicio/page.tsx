@@ -3,6 +3,9 @@ import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { requireHousehold } from "@/lib/household";
 import { createClient } from "@/lib/supabase/server";
 import { netBalances, simplifyDebts, type Participant } from "@/lib/gastos/balance";
+import { toCents } from "@/lib/gastos/money";
+import { isInstallmentPaid } from "@/lib/tarjetas/installments";
+import { personCents } from "@/lib/tarjetas/summary";
 import { Dashboard, type RecentItem, type Stats } from "./Dashboard";
 import { DEFAULT_WIDGETS, isWidgetId } from "./catalog";
 
@@ -11,7 +14,7 @@ async function Resumen() {
   const { data: claims } = await supabase.auth.getClaims();
   const userId = claims?.claims?.sub ?? "";
 
-  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements] =
+  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements, cInstallments, cShares] =
     await Promise.all([
       requireHousehold(),
       supabase.from("shopping_items").select("name").eq("done", false).order("created_at", { ascending: false }).limit(200),
@@ -31,6 +34,8 @@ async function Resumen() {
         .eq("expenses.expense_groups.kind", "household")
         .limit(20000),
       supabase.from("settlements").select("from_participant, to_participant, amount, expense_groups!inner(kind)").eq("expense_groups.kind", "household").limit(1000),
+      supabase.from("card_installments").select("purchase_id, due_date, amount, manual_paid").limit(20000),
+      supabase.from("card_purchase_shares").select("purchase_id, user_id, percent").limit(5000),
     ]);
 
   // Si la migración 0004 aún no se ejecutó, la columna no existe y se usan los widgets por defecto.
@@ -60,7 +65,32 @@ async function Resumen() {
           ? { state: "owed", cents: owed.reduce((s, t) => s + t.cents, 0), name: owed.length === 1 ? nameOf(owed[0].from) : null }
           : { state: "even", cents: 0, name: null };
 
+  // Tarjetas: lo que me queda por pagar y el próximo pago (si la migración 0006 no está, queda en "sin tarjetas").
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date());
+  const sharesOf = new Map<string, Record<string, number>>();
+  for (const s of (cShares.data ?? []) as { purchase_id: string; user_id: string; percent: number }[]) {
+    sharesOf.set(s.purchase_id, { ...(sharesOf.get(s.purchase_id) ?? {}), [s.user_id]: Number(s.percent) });
+  }
+  let cardPending = 0;
+  let nextDue: string | null = null;
+  let nextCents = 0;
+  const allInstallments = (cInstallments.data ?? []) as { purchase_id: string; due_date: string; amount: number; manual_paid: boolean | null }[];
+  for (const i of allInstallments) {
+    if (isInstallmentPaid(i.manual_paid, i.due_date, today)) continue;
+    const mine = personCents(toCents(Number(i.amount)), sharesOf.get(i.purchase_id) ?? {}, user.id);
+    if (mine <= 0) continue;
+    cardPending += mine;
+    if (!nextDue || i.due_date < nextDue) {
+      nextDue = i.due_date;
+      nextCents = mine;
+    } else if (i.due_date === nextDue) {
+      nextCents += mine;
+    }
+  }
+  const tarjeta: Stats["tarjeta"] = { hasData: allInstallments.length > 0, pendingCents: cardPending, nextDue, nextCents };
+
   const stats: Stats = {
+    tarjeta,
     gastos,
     pendingCount: pending?.length ?? 0,
     topPending: (pending ?? []).slice(0, 3).map((p) => p.name),
