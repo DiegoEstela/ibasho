@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Compass, Download } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
+import { useProfile } from "@/components/profile/ProfileProvider";
 import { useInstall } from "@/components/pwa/InstallProvider";
 import { SignOutButton } from "./SignOutButton";
 import { navModules } from "./items";
@@ -12,6 +13,7 @@ import { navModules } from "./items";
 export function Sidebar() {
   const pathname = usePathname();
   const install = useInstall();
+  const profile = useProfile();
 
   return (
     <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r border-line bg-surface/70 px-4 py-6 backdrop-blur lg:flex">
@@ -56,6 +58,22 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-3 flex flex-col gap-1 border-t border-line pt-3">
+        <button
+          onClick={profile.open}
+          className="flex min-h-12 items-center gap-3 rounded-xl px-3 text-left transition hover:bg-washi-deep"
+        >
+          <span
+            className="flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
+            style={{ background: profile.color }}
+            aria-hidden
+          >
+            {(profile.name.charAt(0) || "?").toUpperCase()}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">{profile.name || "Mi perfil"}</span>
+            <span className="block text-[11px] text-ink-soft">Editar mi nombre</span>
+          </span>
+        </button>
         {!install.installed && install.canPrompt && (
           <button
             onClick={install.open}

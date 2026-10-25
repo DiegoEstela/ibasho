@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { REACTIONS } from "@/lib/notitas/papers";
 import { createClient } from "@/lib/supabase/client";
 import { ComposeSheet } from "./ComposeSheet";
-import { formatDate, todayISO, type Note, type NoteReaction, type NoteRead, type Person } from "./types";
+import { formatDate, isScheduled, nowParts, whenLabel, type Note, type NoteReaction, type NoteRead, type Person } from "./types";
 
 type Props = {
   householdId: string;
@@ -31,7 +31,14 @@ const monthTitle = (iso: string) => {
 
 export function NotesView({ householdId, userId, people, initialNotes, initialReads, initialReactions, startWriting = false }: Props) {
   const [supabase] = useState(() => createClient());
-  const [today] = useState(todayISO);
+  // Hora del dispositivo, que se actualiza cada minuto: así una notita programada pasa sola al diario cuando llega su hora.
+  const [clock, setClock] = useState(nowParts);
+  useEffect(() => {
+    const t = setInterval(() => setClock(nowParts()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const today = clock.date;
+  const nowTime = clock.time;
 
   const [notes, setNotes] = useState(initialNotes);
   const [reads, setReads] = useState(initialReads);
@@ -95,8 +102,8 @@ export function NotesView({ householdId, userId, people, initialNotes, initialRe
   const myReaction = (id: string) => reactions.find((r) => r.message_id === id && r.user_id === userId)?.emoji ?? null;
 
   /** Programadas: notitas mías con fecha futura. El resto forma el diario. */
-  const scheduled = useMemo(() => notes.filter((n) => n.from_user === userId && n.deliver_on > today), [notes, userId, today]);
-  const diary = useMemo(() => notes.filter((n) => n.deliver_on <= today), [notes, today]);
+  const scheduled = useMemo(() => notes.filter((n) => n.from_user === userId && isScheduled(n, today, nowTime)), [notes, userId, today, nowTime]);
+  const diary = useMemo(() => notes.filter((n) => !isScheduled(n, today, nowTime)), [notes, today, nowTime]);
 
   const diaryByMonth = useMemo(() => {
     const groups = new Map<string, Note[]>();
@@ -155,7 +162,7 @@ export function NotesView({ householdId, userId, people, initialNotes, initialRe
     refetch();
     if (scheduledFor) {
       setTab("programadas");
-      flash(`Programada: aparecerá el ${formatDate(scheduledFor)}.`);
+      flash(`Programada: aparecerá el ${scheduledFor}.`);
     } else {
       setTab("diario");
       flash(editing ? "Cambios guardados." : `Listo: ${partners.length === 1 ? partners[0].name : "tu pareja"} la verá al abrir la app.`);
@@ -179,7 +186,7 @@ export function NotesView({ householdId, userId, people, initialNotes, initialRe
 
   const statusLine = (note: Note) => {
     if (note.from_user !== userId) return null;
-    if (note.deliver_on > today) return `Se entrega el ${formatDate(note.deliver_on)}`;
+    if (isScheduled(note, today, nowTime)) return `Se entrega el ${formatDate(note.deliver_on)}${note.deliver_time ? ` a las ${note.deliver_time.slice(0, 5)}` : ""}`;
     return readByOthers.has(note.id) ? "✓ Ya la abrieron" : "Aún sin abrir";
   };
 
@@ -197,7 +204,7 @@ export function NotesView({ householdId, userId, people, initialNotes, initialRe
             paper={note.paper}
             sticker={note.sticker}
             from={nameOf(note.from_user)}
-            date={formatDate(note.deliver_on)}
+            date={isScheduled(note, today, nowTime) ? whenLabel(note.deliver_on, note.deliver_time) : formatDate(note.deliver_on)}
           >
             {(status || chips) && (
               <span className="flex items-center justify-between gap-3 text-xs opacity-80">
@@ -298,6 +305,7 @@ export function NotesView({ householdId, userId, people, initialNotes, initialRe
         meName={me?.name ?? "Yo"}
         partners={partners}
         today={today}
+        nowTime={nowTime}
         onSaved={onSaved}
       />
 
@@ -312,7 +320,7 @@ export function NotesView({ householdId, userId, people, initialNotes, initialRe
                 paper={detail.paper}
                 sticker={detail.sticker}
                 from={nameOf(detail.from_user)}
-                date={formatDate(detail.deliver_on)}
+                date={isScheduled(detail, today, nowTime) ? whenLabel(detail.deliver_on, detail.deliver_time) : formatDate(detail.deliver_on)}
                 tilted={false}
                 size="lg"
               />
@@ -343,9 +351,9 @@ export function NotesView({ householdId, userId, people, initialNotes, initialRe
             ) : (
               <div className="flex flex-col gap-3">
                 <p className="flex items-center justify-center gap-2 text-center text-sm text-ink-soft">
-                  {detail.deliver_on > today ? (
+                  {isScheduled(detail, today, nowTime) ? (
                     <>
-                      <CalendarClock size={16} /> Se entregará el {formatDate(detail.deliver_on)}
+                      <CalendarClock size={16} /> Se entregará el {formatDate(detail.deliver_on)}{detail.deliver_time ? ` a las ${detail.deliver_time.slice(0, 5)}` : ""}
                     </>
                   ) : readByOthers.has(detail.id) ? (
                     <>

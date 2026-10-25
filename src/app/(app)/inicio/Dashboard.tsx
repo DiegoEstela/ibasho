@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatEUR } from "@/lib/gastos/money";
 import { timeAgo } from "@/lib/utils/time";
 import { formatRange, tripPhase } from "@/lib/viajes/dates";
+import { Reminders, type ReminderTask } from "./Reminders";
 import { MIN_SLOTS, WIDGETS, type WidgetDef, type WidgetId } from "./catalog";
 
 export type Stats = {
@@ -47,6 +48,10 @@ type Props = {
   stats: Stats;
   recentItems: RecentItem[];
   members: Member[];
+  /** Tareas de esta semana (y atrasadas) de quien mira. */
+  reminders: ReminderTask[];
+  /** Hoy en España ("aaaa-mm-dd"), el mismo día con el que se calculó la semana. */
+  madridToday: string;
 };
 
 type Event = { key: string; memberId: string; text: string; at: string };
@@ -93,6 +98,8 @@ export function Dashboard({
   stats,
   recentItems,
   members,
+  reminders,
+  madridToday,
 }: Props) {
   const [supabase] = useState(() => createClient());
   const [now] = useState(() => Date.now());
@@ -175,6 +182,8 @@ export function Dashboard({
           </>
         }
       />
+
+      <Reminders tasks={reminders} today={madridToday} />
 
       <div className="mt-3 flex items-center justify-between lg:mt-8">
         <h2 className="font-display text-base font-bold lg:text-xl">Mi resumen</h2>

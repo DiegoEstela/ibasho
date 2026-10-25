@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Compass, Download, MoreHorizontal } from "lucide-react";
+import { Compass, Download, MoreHorizontal, UserRound } from "lucide-react";
+import { useProfile } from "@/components/profile/ProfileProvider";
 import { useInstall } from "@/components/pwa/InstallProvider";
 import { SignOutButton } from "./SignOutButton";
 import { moreItems, tabItems } from "./items";
@@ -13,6 +14,7 @@ export function TabBar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const install = useInstall();
+  const profile = useProfile();
 
   const moreActive = moreItems.some((m) => pathname.startsWith(m.href));
 
@@ -64,6 +66,18 @@ export function TabBar() {
           )}
 
           <div className="mx-2 my-1.5 h-px bg-line" />
+
+          <button
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              profile.open();
+            }}
+            className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-medium text-ink transition hover:bg-washi-deep"
+          >
+            <UserRound size={20} strokeWidth={1.75} />
+            <span className="min-w-0 flex-1 truncate text-left">{profile.name ? `Mi perfil · ${profile.name}` : "Mi perfil"}</span>
+          </button>
 
           {!install.installed && (
             <button

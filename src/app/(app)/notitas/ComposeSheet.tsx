@@ -5,7 +5,7 @@ import { BottomSheet } from "@/components/ui/BottomSheet";
 import { NoteCard } from "@/components/notitas/NoteCard";
 import { PAPERS, STICKERS } from "@/lib/notitas/papers";
 import { createClient } from "@/lib/supabase/client";
-import { addDaysISO, formatDate, MAX_LENGTH, type Note, type Person } from "./types";
+import { MAX_LENGTH, isScheduled, shortTime, whenLabel, type Note, type Person } from "./types";
 
 type Props = {
   open: boolean;
@@ -17,6 +17,8 @@ type Props = {
   /** Las demás personas del hogar (a quien se le puede escribir). */
   partners: Person[];
   today: string;
+  /** Hora de ahora ("10:30"), para comprobar que lo programado aún no pasó. */
+  nowTime: string;
   /** `scheduledFor` viene si la notita quedó programada para otro día. */
   onSaved: (scheduledFor: string | null) => void;
 };
@@ -34,17 +36,20 @@ export function ComposeSheet(props: Props) {
   );
 }
 
-function ComposeForm({ note, householdId, meName, partners, today, onSaved }: Props) {
+function ComposeForm({ note, householdId, meName, partners, today, nowTime, onSaved }: Props) {
   const [body, setBody] = useState(note?.body ?? "");
   const [paper, setPaper] = useState(note?.paper ?? "crema");
   const [sticker, setSticker] = useState<string | null>(note ? note.sticker : "🌸");
-  const [later, setLater] = useState(!!note && note.deliver_on > today);
-  const [date, setDate] = useState(note && note.deliver_on > today ? note.deliver_on : "");
+  const scheduledNote = !!note && isScheduled(note, today, nowTime);
+  const [later, setLater] = useState(scheduledNote);
+  const [date, setDate] = useState(scheduledNote ? note!.deliver_on : "");
+  const [time, setTime] = useState(scheduledNote ? shortTime(note!.deliver_time) : "");
   const [to, setTo] = useState(note ? (note.to_user ?? EVERYONE) : partners.length === 1 ? partners[0].id : EVERYONE);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   const deliverOn = later && date ? date : today;
+  const deliverTime = later && time ? time : null;
   const recipient = partners.find((p) => p.id === to);
 
   async function submit(e: React.FormEvent) {
@@ -52,13 +57,16 @@ function ComposeForm({ note, householdId, meName, partners, today, onSaved }: Pr
     setError("");
     if (!body.trim()) return setError("Escribe algo bonito antes de dejarla.");
     if (later && !date) return setError("Elige el día en que quieres que aparezca.");
-    if (later && date <= today) return setError("Para programarla, elige un día que aún no haya llegado.");
+    if (later && date < today) return setError("Ese día ya pasó. Elige hoy o un día que aún no haya llegado.");
+    if (later && date === today && !time) return setError("Para programarla para hoy, elige también la hora.");
+    if (later && date === today && time <= nowTime) return setError("Esa hora ya pasó. Elige una hora que aún no haya llegado.");
 
     const payload = {
       body: body.trim(),
       paper,
       sticker,
       deliver_on: deliverOn,
+      deliver_time: deliverTime,
       to_user: to === EVERYONE ? null : to,
     };
 
@@ -69,7 +77,7 @@ function ComposeForm({ note, householdId, meName, partners, today, onSaved }: Pr
       : await supabase.from("daily_messages").insert({ ...payload, household_id: householdId });
     setSaving(false);
     if (saveError) return setError("No se pudo guardar la notita. Revisa tu conexión e inténtalo de nuevo.");
-    onSaved(deliverOn > today ? deliverOn : null);
+    onSaved(later ? whenLabel(deliverOn, deliverTime).replace(" · ", " a las ") : null);
   }
 
   return (
@@ -82,7 +90,7 @@ function ComposeForm({ note, householdId, meName, partners, today, onSaved }: Pr
           paper={paper}
           sticker={sticker}
           from={meName}
-          date={formatDate(deliverOn)}
+          date={whenLabel(deliverOn, deliverTime)}
           tilted={false}
         />
       </div>
@@ -167,7 +175,7 @@ function ComposeForm({ note, householdId, meName, partners, today, onSaved }: Pr
           {(
             [
               [false, "Ahora"],
-              [true, "Otro día"],
+              [true, "Programar"],
             ] as const
           ).map(([value, text]) => (
             <button
@@ -183,16 +191,25 @@ function ComposeForm({ note, householdId, meName, partners, today, onSaved }: Pr
         </div>
         {later && (
           <>
-            <input
-              type="date"
-              aria-label="Día de entrega"
-              className={`${field} mt-2 min-h-11`}
-              value={date}
-              min={addDaysISO(today, 1)}
-              onChange={(e) => setDate(e.target.value)}
-            />
+            <div className="mt-2 grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-ink-soft" htmlFor="n-date">Día</label>
+                <input
+                  id="n-date"
+                  type="date"
+                  className={`${field} min-h-11`}
+                  value={date}
+                  min={today}
+                  onChange={(e) => setDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-ink-soft" htmlFor="n-time">Hora (opcional)</label>
+                <input id="n-time" type="time" className={`${field} min-h-11`} value={time} onChange={(e) => setTime(e.target.value)} />
+              </div>
+            </div>
             <p className="mt-1.5 px-1 text-xs text-ink-soft">
-              {recipient?.name ?? "Quien la reciba"} no la verá hasta ese día; cuando llegue, aparecerá al abrir la app.
+              {recipient?.name ?? "Quien la reciba"} no la verá hasta ese día{time ? " y esa hora" : ""}; cuando llegue, aparecerá al abrir la app.
             </p>
           </>
         )}

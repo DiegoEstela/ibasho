@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { Banknote, CreditCard, Download, PiggyBank, Plus, Trash2 } from "lucide-react";
+import { Banknote, Download, PiggyBank, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { CatIcon } from "@/components/ui/CatIcon";
 import { GastosTabs } from "@/components/ui/GastosTabs";
@@ -12,7 +11,7 @@ import { createClient } from "@/lib/supabase/client";
 import { netBalances, simplifyDebts, type Participant, type Transfer } from "@/lib/gastos/balance";
 import { expenseCategory, EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
 import { formatEUR, toCents } from "@/lib/gastos/money";
-import { debitBalanceCents, type DepositRow } from "@/lib/tarjetas/debit";
+import type { DepositRow } from "@/lib/tarjetas/debit";
 import { cardLabel } from "@/lib/tarjetas/labels";
 import type { Card } from "./tarjetas/types";
 import { DepositDetailSheet } from "./DepositDetailSheet";
@@ -40,9 +39,6 @@ type HistoryRow =
 
 /** Clave interna para los gastos pagados desde una tarjeta compartida (no tienen una persona que pague). */
 const POOL = "__pool";
-
-const select =
-  "min-h-10 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-forest";
 
 const monthOf = (iso: string) => iso.slice(0, 7);
 const monthLabel = (ym: string) => {
@@ -80,6 +76,9 @@ export function ExpensesView({
   const [cardFilter, setCardFilter] = useState("");
   const [depositOpen, setDepositOpen] = useState(false);
   const [depositDetail, setDepositDetail] = useState<DepositRow | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  // En el teléfono: pestaña «Gastos» (movimientos) o «Saldos» (quién debe a quién).
+  const [sub, setSub] = useState<"gastos" | "saldos">("gastos");
 
   const [expenseSheet, setExpenseSheet] = useState<{ open: boolean; expense: Expense | null }>({ open: false, expense: null });
   const [settleSheet, setSettleSheet] = useState<{ open: boolean; suggestion: Transfer | null }>({ open: false, suggestion: null });
@@ -215,21 +214,15 @@ export function ExpensesView({
     return rows.sort((a, b) => b.date.localeCompare(a.date) || b.created.localeCompare(a.created));
   }, [visibleExpenses, settlements, deposits, participants, monthFilter, categoryFilter, personFilter, cardFilter]);
 
-  /** Saldo de cada tarjeta de débito: lo inicial, más ingresos, menos lo gastado con ella. */
-  const debitCards = useMemo(
-    () =>
-      cards
-        .filter((c) => c.kind === "debit")
-        .map((card) => ({
-          card,
-          cents: debitBalanceCents(
-            card.initial_balance,
-            deposits.filter((d) => d.card_id === card.id),
-            expenses.filter((e) => e.card_id === card.id),
-          ),
-        })),
-    [cards, deposits, expenses],
-  );
+  /** Cuánto puso y cuánto le corresponde a cada persona, para ver las cuentas de un vistazo. */
+  const perPerson = useMemo(() => {
+    const paid = new Map<string, number>();
+    const owed = new Map<string, number>();
+    for (const e of expenses) if (e.paid_by) paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + toCents(e.amount));
+    const payer = new Map(expenses.map((e) => [e.id, e.paid_by]));
+    for (const sp of splits) if (payer.get(sp.expense_id)) owed.set(sp.participant_id, (owed.get(sp.participant_id) ?? 0) + toCents(sp.amount));
+    return participants.map((p) => ({ p, paid: paid.get(p.id) ?? 0, owed: owed.get(p.id) ?? 0, net: net[p.id] ?? 0 }));
+  }, [participants, expenses, splits, net]);
 
   const summary = useMemo(() => {
     const scope = expenses.filter((e) => !monthFilter || monthOf(e.expense_date) === monthFilter);
@@ -324,6 +317,27 @@ export function ExpensesView({
 
   const toneClass = tone === "owe" ? "text-hanko" : tone === "owed" ? "text-forest" : "text-ink";
 
+  const activeFilters = [monthFilter !== currentMonth, !!categoryFilter, !!personFilter, !!cardFilter].filter(Boolean).length;
+  const filterSummary = [
+    monthFilter ? monthLabel(monthFilter) : "Todos los meses",
+    categoryFilter,
+    personFilter ? (person(personFilter)?.id === me.id ? "Yo" : person(personFilter)?.name) : null,
+    cardFilter ? cardOf(cardFilter)?.name : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const visibleTotal = visibleExpenses.reduce((sum, e) => sum + toCents(e.amount), 0);
+
+  function clearFilters() {
+    setMonthFilter(currentMonth);
+    setCategoryFilter("");
+    setPersonFilter("");
+    setCardFilter("");
+  }
+
+  const iconButton =
+    "relative flex size-10 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink-soft transition active:scale-90";
+
   return (
     <section className="max-w-[1500px]">
       <PageHeader
@@ -331,18 +345,14 @@ export function ExpensesView({
         subtitle={monthFilter ? monthLabel(monthFilter) : "Todos los meses"}
         actions={
           <>
-            <button
-              onClick={exportCsv}
-              aria-label="Exportar a CSV"
-              className="flex size-10 items-center justify-center rounded-full border border-line bg-surface text-ink-soft transition active:scale-90"
-            >
-              <Download size={18} />
+            <button onClick={() => setFilterOpen(true)} aria-label={activeFilters ? `Filtros (${activeFilters} activos)` : "Filtros"} className={iconButton}>
+              <SlidersHorizontal size={17} />
+              {activeFilters > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-forest text-[10px] font-bold text-surface">{activeFilters}</span>
+              )}
             </button>
-            <button
-              onClick={() => setDepositOpen(true)}
-              className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-line bg-surface px-3 text-sm font-medium text-forest transition active:scale-95 lg:min-h-11 lg:rounded-2xl lg:px-4"
-            >
-              <PiggyBank size={16} /> Ingreso
+            <button onClick={() => setDepositOpen(true)} aria-label="Ingresar dinero a una tarjeta" className={`${iconButton} lg:size-auto lg:min-h-11 lg:gap-1.5 lg:rounded-2xl lg:px-4 lg:text-sm lg:font-medium lg:text-forest`}>
+              <PiggyBank size={17} /> <span className="hidden lg:inline">Ingreso</span>
             </button>
             <button
               onClick={() => setExpenseSheet({ open: true, expense: null })}
@@ -356,137 +366,52 @@ export function ExpensesView({
 
       <GastosTabs active="compartidos" />
 
-      <div className="mt-1 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:gap-x-10">
-       <div className="flex flex-col gap-4 lg:col-start-2 lg:row-start-1 lg:self-start">
-        {/* Balance */}
-        <div className="rounded-2xl border border-line bg-surface p-4 lg:p-5">
-          <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">Balance</p>
-          <p className={`mt-1 font-display text-xl font-bold leading-snug lg:text-2xl ${toneClass}`}>{headline}</p>
-
-          {transfers.length > 0 && (
-            <ul className="mt-3 flex flex-col gap-2">
-              {transfers.map((t) => (
-                <li key={`${t.from}-${t.to}`} className="flex items-center justify-between gap-2 rounded-xl bg-background px-3 py-2 text-sm">
-                  <span className="min-w-0 truncate">
-                    {nameOf(t.from)} → {nameOf(t.to)} · <span className="font-medium">{formatEUR(t.cents)}</span>
-                  </span>
-                  <button
-                    onClick={() => setSettleSheet({ open: true, suggestion: t })}
-                    className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-forest/15 px-3 text-xs font-medium text-forest transition active:scale-95"
-                  >
-                    <Banknote size={14} /> Saldar
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        {/* Dinero en las tarjetas de débito */}
-        {debitCards.length > 0 && (
-          <div className="rounded-2xl border border-line bg-surface p-4 lg:p-5">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">Dinero en tarjetas</p>
-              <Link href="/gastos/tarjetas" className="text-xs font-medium text-forest">Ver detalle</Link>
-            </div>
-            <ul className="mt-2 flex flex-col gap-1.5">
-              {debitCards.map(({ card, cents }) => (
-                <li key={card.id} className="flex items-center justify-between gap-3 text-sm">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <CreditCard size={15} style={{ color: colorFor(card.color) }} className="shrink-0" />
-                    <span className="truncate">{cardLabel(card)}</span>
-                  </span>
-                  <span className={`font-medium ${cents < 0 ? "text-hanko" : ""}`}>{formatEUR(cents)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* Resumen del mes */}
-        <div className="rounded-2xl border border-line bg-surface p-4 lg:p-5">
-          <div className="flex items-baseline justify-between gap-3">
-            <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">
-              {monthFilter ? "Gastado en el mes" : "Total gastado"}
-            </p>
-            <p className="text-xs text-ink-soft">
-              {summary.count} {summary.count === 1 ? "gasto" : "gastos"}
-            </p>
-          </div>
-          <p className="mt-1 font-display text-2xl font-bold">{formatEUR(summary.total)}</p>
-
-          {summary.categories.length > 0 && (
-            <ul className="mt-3 flex flex-col gap-2">
-              {summary.categories.map(([name, cents]) => {
-                const cat = expenseCategory(name);
-                return (
-                  <li key={name} className="text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5">
-                        <CatIcon name={cat.icon} size={14} style={{ color: colorFor(cat.color) }} /> {name}
-                      </span>
-                      <span className="text-ink-soft">{formatEUR(cents)}</span>
-                    </div>
-                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-washi-deep">
-                      <div className="h-full rounded-full" style={{ width: `${(cents / summary.total) * 100}%`, background: colorFor(cat.color) }} />
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-
-          {summary.people.length > 1 && (
-            <p className="mt-3 text-xs text-ink-soft">
-              Pagó {summary.people.map(([id, cents]) => `${nameOf(id)} ${formatEUR(cents)}`).join(" · ")}
-            </p>
-          )}
-        </div>
-
-       </div>
-
-        {/* Historial */}
-        <div className="lg:col-start-1 lg:row-start-1">
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            <select className={select} value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} aria-label="Mes">
-              <option value="">Todos los meses</option>
-              {months.map((m) => (
-                <option key={m} value={m}>{monthLabel(m)}</option>
-              ))}
-            </select>
-            <select className={select} value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} aria-label="Categoría">
-              <option value="">Todas las categorías</option>
-              {EXPENSE_CATEGORIES.map((c) => (
-                <option key={c.name}>{c.name}</option>
-              ))}
-            </select>
-            <select className={select} value={personFilter} onChange={(e) => setPersonFilter(e.target.value)} aria-label="Persona">
-              <option value="">Todas las personas</option>
-              {participants.map((p) => (
-                <option key={p.id} value={p.id}>{p.id === me.id ? "Yo" : p.name}</option>
-              ))}
-            </select>
-            {cards.length > 0 && (
-              <select className={select} value={cardFilter} onChange={(e) => setCardFilter(e.target.value)} aria-label="Tarjeta">
-                <option value="">Todas las tarjetas</option>
-                {cards.map((c) => (
-                  <option key={c.id} value={c.id}>{cardLabel(c)}</option>
-                ))}
-              </select>
+      {/* Gastos | Saldos (solo en el teléfono; en pantallas grandes se ven juntos) */}
+      <div className="mb-3 flex gap-1 rounded-xl bg-washi-deep p-1 lg:hidden" role="tablist" aria-label="Vista de gastos">
+        {(
+          [
+            ["gastos", "Gastos"],
+            ["saldos", "Saldos"],
+          ] as const
+        ).map(([value, text]) => (
+          <button
+            key={value}
+            role="tab"
+            aria-selected={sub === value}
+            onClick={() => setSub(value)}
+            className={`flex min-h-10 flex-1 items-center justify-center gap-2 rounded-lg text-sm font-medium transition ${sub === value ? "bg-surface text-forest shadow-sm" : "text-ink-soft"}`}
+          >
+            {text}
+            {value === "saldos" && tone !== "even" && (
+              <span className={`size-2 rounded-full ${tone === "owe" ? "bg-hanko" : "bg-forest"}`} aria-label={tone === "owe" ? "Debes dinero" : "Te deben dinero"} />
             )}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:gap-x-8">
+        {/* ===== Gastos: todos los movimientos ===== */}
+        <div className={`${sub === "gastos" ? "" : "hidden"} lg:col-start-1 lg:row-start-1 lg:block`}>
+          <div className="mb-2 flex items-center justify-between gap-3 px-1">
+            <p className="min-w-0 truncate text-xs text-ink-soft">{filterSummary}</p>
+            <p className="shrink-0 text-sm">
+              <span className="font-display font-bold">{formatEUR(visibleTotal)}</span>
+              <span className="text-xs text-ink-soft"> · {visibleExpenses.length} {visibleExpenses.length === 1 ? "gasto" : "gastos"}</span>
+            </p>
           </div>
 
           {history.length === 0 ? (
-            <div className="mt-3 rounded-2xl border border-dashed border-line bg-surface/60 p-6 text-center">
-              <p className="font-display text-lg font-bold">Sin movimientos</p>
+            <div className="rounded-2xl border border-dashed border-line bg-surface/60 p-5 text-center">
+              <p className="font-display text-base font-bold">Sin movimientos</p>
               <p className="mt-1 text-sm text-ink-soft">
-                {expenses.length === 0
-                  ? "Apunta el primer gasto y la app calcula quién le debe a quién."
-                  : "No hay nada con estos filtros."}
+                {expenses.length === 0 ? "Apunta el primer gasto y la app calcula quién le debe a quién." : "No hay nada con estos filtros."}
               </p>
+              {activeFilters > 0 && expenses.length > 0 && (
+                <button onClick={clearFilters} className="mt-2 min-h-10 text-sm font-medium text-forest">Quitar los filtros</button>
+              )}
             </div>
           ) : (
-            <ul className="mt-2 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+            <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
               {history.map((row) =>
                 row.kind === "deposit" ? (
                   <DepositItem
@@ -506,36 +431,145 @@ export function ExpensesView({
                     onOpen={() => setExpenseSheet({ open: true, expense: row.expense })}
                   />
                 ) : (
-                  <li key={row.key}>
-                    <button
-                      onClick={() => setSettlementDetail(row.settlement)}
-                      className="flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left"
-                    >
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-forest/15 text-forest">
-                        <Banknote size={18} strokeWidth={1.75} />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[15px]">
-                          {nameOf(row.settlement.from_participant)} pagó a {nameOf(row.settlement.to_participant)}
-                        </span>
-                        <span className="block text-xs text-ink-soft">Pago · {formatDate(row.settlement.settled_on)}</span>
-                      </span>
-                      <span className="text-[15px] font-medium text-forest">{formatEUR(toCents(row.settlement.amount))}</span>
-                    </button>
-                  </li>
+                  <SettlementItem
+                    key={row.key}
+                    text={`${nameOf(row.settlement.from_participant)} pagó a ${nameOf(row.settlement.to_participant)}`}
+                    date={row.settlement.settled_on}
+                    amount={row.settlement.amount}
+                    onOpen={() => setSettlementDetail(row.settlement)}
+                  />
                 ),
               )}
             </ul>
           )}
+        </div>
 
-          <button
-            onClick={() => setSettleSheet({ open: true, suggestion: null })}
-            className="mt-3 flex min-h-11 items-center gap-2 px-2 text-sm text-forest"
-          >
-            <Banknote size={16} /> Registrar un pago
-          </button>
+        {/* ===== Saldos: cuánto debo / me deben ===== */}
+        <div className={`${sub === "saldos" ? "flex" : "hidden"} flex-col gap-3 lg:col-start-2 lg:row-start-1 lg:flex lg:self-start`}>
+          <div className="rounded-2xl border border-line bg-surface p-4">
+            <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">Balance</p>
+            <p className={`mt-1 font-display text-xl font-bold leading-snug ${toneClass}`}>{headline}</p>
+
+            {transfers.length > 0 && (
+              <ul className="mt-3 flex flex-col gap-2">
+                {transfers.map((t) => (
+                  <li key={`${t.from}-${t.to}`} className="flex items-center justify-between gap-2 rounded-xl bg-background px-3 py-2 text-sm">
+                    <span className="min-w-0 truncate">
+                      {nameOf(t.from)} → {nameOf(t.to)} · <span className="font-medium">{formatEUR(t.cents)}</span>
+                    </span>
+                    <button
+                      onClick={() => setSettleSheet({ open: true, suggestion: t })}
+                      className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-forest/15 px-3 text-xs font-medium text-forest transition active:scale-95"
+                    >
+                      <Banknote size={14} /> Saldar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <button onClick={() => setSettleSheet({ open: true, suggestion: null })} className="mt-3 flex min-h-10 items-center gap-2 text-sm text-forest">
+              <Banknote size={15} /> Registrar un pago
+            </button>
+          </div>
+
+          {/* Cuentas de cada uno */}
+          <div className="rounded-2xl border border-line bg-surface p-4">
+            <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">Cuentas de cada uno</p>
+            <ul className="mt-2 flex flex-col gap-2.5">
+              {perPerson.map(({ p, paid, owed, net: balance }) => (
+                <li key={p.id} className="text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="size-2.5 shrink-0 rounded-full" style={{ background: p.color }} />
+                      <span className="truncate font-medium">{nameOf(p.id)}</span>
+                    </span>
+                    <span className={`shrink-0 font-medium ${balance > 0 ? "text-forest" : balance < 0 ? "text-hanko" : "text-ink-soft"}`}>
+                      {balance > 0 ? "+" : balance < 0 ? "−" : ""}
+                      {formatEUR(Math.abs(balance))}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 pl-[18px] text-xs text-ink-soft">
+                    Puso {formatEUR(paid)} · Le corresponden {formatEUR(owed)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Resumen del mes */}
+          <div className="rounded-2xl border border-line bg-surface p-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">{monthFilter ? "Gastado en el mes" : "Total gastado"}</p>
+              <p className="text-xs text-ink-soft">
+                {summary.count} {summary.count === 1 ? "gasto" : "gastos"}
+              </p>
+            </div>
+            <p className="mt-1 font-display text-xl font-bold">{formatEUR(summary.total)}</p>
+
+            {summary.categories.length > 0 && (
+              <ul className="mt-2.5 flex flex-col gap-2">
+                {summary.categories.map(([name, cents]) => {
+                  const cat = expenseCategory(name);
+                  return (
+                    <li key={name} className="text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5">
+                          <CatIcon name={cat.icon} size={14} style={{ color: colorFor(cat.color) }} /> {name}
+                        </span>
+                        <span className="text-ink-soft">{formatEUR(cents)}</span>
+                      </div>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-washi-deep">
+                        <div className="h-full rounded-full" style={{ width: `${(cents / summary.total) * 100}%`, background: colorFor(cat.color) }} />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Filtros */}
+      <BottomSheet open={filterOpen} onClose={() => setFilterOpen(false)} title="Filtrar gastos">
+        <div className="flex flex-col gap-4">
+          {[
+            { id: "f-mes", text: "Mes", value: monthFilter, set: setMonthFilter, options: [["", "Todos los meses"], ...months.map((m) => [m, monthLabel(m)])] },
+            { id: "f-cat", text: "Categoría", value: categoryFilter, set: setCategoryFilter, options: [["", "Todas las categorías"], ...EXPENSE_CATEGORIES.map((c) => [c.name, c.name])] },
+            { id: "f-per", text: "Quién pagó", value: personFilter, set: setPersonFilter, options: [["", "Todas las personas"], ...participants.map((p) => [p.id, p.id === me.id ? "Yo" : p.name])] },
+            ...(cards.length > 0
+              ? [{ id: "f-tar", text: "Tarjeta", value: cardFilter, set: setCardFilter, options: [["", "Todas las tarjetas"], ...cards.map((c) => [c.id, cardLabel(c)])] }]
+              : []),
+          ].map((f) => (
+            <div key={f.id}>
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft" htmlFor={f.id}>{f.text}</label>
+              <select
+                id={f.id}
+                className="min-h-11 w-full rounded-xl border border-line bg-surface px-3 text-base text-ink outline-none focus:border-forest"
+                value={f.value}
+                onChange={(e) => f.set(e.target.value)}
+              >
+                {f.options.map(([value, text]) => (
+                  <option key={value} value={value}>{text}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+
+          <div className="flex gap-2">
+            <button onClick={clearFilters} className="min-h-11 flex-1 rounded-2xl border border-line bg-surface text-sm font-medium text-ink-soft transition active:scale-95">
+              Limpiar
+            </button>
+            <button onClick={exportCsv} className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl border border-line bg-surface text-sm font-medium text-forest transition active:scale-95">
+              <Download size={15} /> Exportar CSV
+            </button>
+          </div>
+          <button onClick={() => setFilterOpen(false)} className="min-h-12 rounded-2xl bg-forest px-8 text-base font-medium text-surface shadow-sm transition active:scale-95">
+            Ver {visibleExpenses.length} {visibleExpenses.length === 1 ? "gasto" : "gastos"}
+          </button>
+        </div>
+      </BottomSheet>
 
       <ExpenseSheet
         open={expenseSheet.open}
@@ -583,14 +617,10 @@ export function ExpensesView({
         {settlementDetail && (
           <div className="flex flex-col gap-4">
             <p className="text-[15px]">
-              {nameOf(settlementDetail.from_participant)} pagó{" "}
-              <span className="font-medium">{formatEUR(toCents(settlementDetail.amount))}</span> a{" "}
+              {nameOf(settlementDetail.from_participant)} pagó <span className="font-medium">{formatEUR(toCents(settlementDetail.amount))}</span> a{" "}
               {nameOf(settlementDetail.to_participant)} el {formatDate(settlementDetail.settled_on)}.
             </p>
-            <button
-              onClick={() => removeSettlement(settlementDetail)}
-              className="flex min-h-11 items-center justify-center gap-2 text-sm text-hanko"
-            >
+            <button onClick={() => removeSettlement(settlementDetail)} className="flex min-h-11 items-center justify-center gap-2 text-sm text-hanko">
               <Trash2 size={16} /> Eliminar este pago
             </button>
           </div>
@@ -600,20 +630,41 @@ export function ExpensesView({
   );
 }
 
+/* ---------- Filas del historial (compactas) ---------- */
+
+const rowButton = "flex min-h-12 w-full items-center gap-2.5 px-3 py-1.5 text-left";
+
+function SettlementItem({ text, date, amount, onOpen }: { text: string; date: string; amount: number; onOpen: () => void }) {
+  return (
+    <li>
+      <button onClick={onOpen} className={rowButton}>
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-forest/15 text-forest">
+          <Banknote size={16} strokeWidth={1.75} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm">{text}</span>
+          <span className="block text-[11px] text-ink-soft">Pago · {formatDate(date)}</span>
+        </span>
+        <span className="text-sm font-medium text-forest">{formatEUR(toCents(amount))}</span>
+      </button>
+    </li>
+  );
+}
+
 function DepositItem({ deposit, cardName, by, onOpen }: { deposit: DepositRow; cardName: string; by: string; onOpen: () => void }) {
   return (
     <li>
-      <button onClick={onOpen} className="flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left">
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-forest/15 text-forest">
-        <PiggyBank size={18} strokeWidth={1.75} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[15px]">{deposit.note?.trim() || "Ingreso"} · {cardName}</span>
-        <span className="block text-xs text-ink-soft">
-          Puso {by} · {formatDate(deposit.deposit_date)}
+      <button onClick={onOpen} className={rowButton}>
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-forest/15 text-forest">
+          <PiggyBank size={16} strokeWidth={1.75} />
         </span>
-      </span>
-      <span className="text-[15px] font-medium text-forest">+{formatEUR(toCents(deposit.amount))}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm">{deposit.note?.trim() || "Ingreso"} · {cardName}</span>
+          <span className="block text-[11px] text-ink-soft">
+            Puso {by} · {formatDate(deposit.deposit_date)}
+          </span>
+        </span>
+        <span className="text-sm font-medium text-forest">+{formatEUR(toCents(deposit.amount))}</span>
       </button>
     </li>
   );
@@ -636,24 +687,21 @@ function ExpenseItem({
   const color = colorFor(cat.color);
   return (
     <li>
-      <button onClick={onOpen} className="flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left">
-        <span
-          className="flex size-9 shrink-0 items-center justify-center rounded-xl"
-          style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}
-        >
-          <CatIcon name={cat.icon} size={18} strokeWidth={1.75} />
+      <button onClick={onOpen} className={rowButton}>
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>
+          <CatIcon name={cat.icon} size={16} strokeWidth={1.75} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[15px]">{expense.description}</span>
-          <span className="block text-xs text-ink-soft">
+          <span className="block truncate text-sm">{expense.description}</span>
+          <span className="block truncate text-[11px] text-ink-soft">
             {[expense.paid_by ? `Pagó ${payer}` : cardText ? null : "Cuenta compartida", cardText, formatDate(expense.expense_date)]
               .filter(Boolean)
               .join(" · ")}
           </span>
         </span>
         <span className="text-right">
-          <span className="block text-[15px] font-medium">{formatEUR(toCents(expense.amount))}</span>
-          <span className="block text-[11px] text-ink-soft">{mine > 0 ? `Tu parte ${formatEUR(toCents(mine))}` : "No participas"}</span>
+          <span className="block text-sm font-medium">{formatEUR(toCents(expense.amount))}</span>
+          <span className="block text-[10px] text-ink-soft">{mine > 0 ? `Tu parte ${formatEUR(toCents(mine))}` : "No participas"}</span>
         </span>
       </button>
     </li>

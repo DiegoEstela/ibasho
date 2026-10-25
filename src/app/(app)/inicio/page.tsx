@@ -6,6 +6,8 @@ import { netBalances, simplifyDebts, type Participant } from "@/lib/gastos/balan
 import { toCents } from "@/lib/gastos/money";
 import { isInstallmentPaid } from "@/lib/tarjetas/installments";
 import { personCents } from "@/lib/tarjetas/summary";
+import { addDays } from "@/lib/viajes/dates";
+import type { ReminderTask } from "./Reminders";
 import { Dashboard, type RecentItem, type Stats } from "./Dashboard";
 import { DEFAULT_WIDGETS, isWidgetId } from "./catalog";
 
@@ -14,6 +16,9 @@ async function Resumen() {
   const { data: claims } = await supabase.auth.getClaims();
   const userId = claims?.claims?.sub ?? "";
   const todayMadrid = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date());
+
+  // La semana termina el domingo.
+  const weekEnd = addDays(todayMadrid, (7 - new Date(`${todayMadrid}T00:00:00Z`).getUTCDay()) % 7);
 
   const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements, cInstallments, cShares, nNotes, nReads, vTrips, wItems, hNotes, tTasks] =
     await Promise.all([
@@ -42,7 +47,14 @@ async function Resumen() {
       supabase.from("trips").select("id, name, emoji, start_date, end_date").order("start_date", { ascending: true, nullsFirst: false }).limit(50),
       supabase.from("wishlist_items").select("title, priority, created_at").eq("status", "deseado").order("priority").order("created_at", { ascending: false }).limit(100),
       supabase.from("notes").select("title, pinned, updated_at").order("pinned", { ascending: false }).order("updated_at", { ascending: false }).limit(100),
-      supabase.from("tasks").select("title, due_date, assigned_to, remind_time").eq("active", true).lte("due_date", todayMadrid).order("due_date").limit(100),
+      supabase
+        .from("tasks")
+        .select("id, title, recurrence, interval_days, weekdays, month_day, due_date, assigned_to, remind_time")
+        .eq("active", true)
+        .lte("due_date", weekEnd)
+        .order("due_date")
+        .order("remind_time", { nullsFirst: false })
+        .limit(200),
     ]);
 
   // Si la migración 0004 aún no se ejecutó, la columna no existe y se usan los widgets por defecto.
@@ -112,9 +124,8 @@ async function Resumen() {
   // Wishlist, notas y tareas (si sus migraciones no están, las listas llegan vacías y el widget lo dice).
   const wishlist: Stats["wishlist"] = { count: wItems.data?.length ?? 0, top: (wItems.data?.[0]?.title as string | undefined) ?? null };
   const notas: Stats["notas"] = { count: hNotes.data?.length ?? 0, latest: (hNotes.data?.[0]?.title as string | undefined) ?? null };
-  const myTasks = ((tTasks.data ?? []) as { title: string; due_date: string; assigned_to: string | null }[]).filter(
-    (t) => t.assigned_to === null || t.assigned_to === userId,
-  );
+  const weekTasks = ((tTasks.data ?? []) as ReminderTask[]).filter((t) => t.assigned_to === null || t.assigned_to === userId);
+  const myTasks = weekTasks.filter((t) => t.due_date <= today);
   const tareas: Stats["tareas"] = {
     overdue: myTasks.filter((t) => t.due_date < today).length,
     today: myTasks.filter((t) => t.due_date === today).length,
@@ -143,6 +154,8 @@ async function Resumen() {
       inviteCode={household.invite_code}
       initialWidgets={me ? saved : DEFAULT_WIDGETS}
       stats={stats}
+      reminders={weekTasks}
+      madridToday={todayMadrid}
       recentItems={(recent ?? []) as RecentItem[]}
       members={(profiles ?? []).map((p) => ({ id: p.id, name: p.display_name || "Alguien", color: p.color }))}
     />

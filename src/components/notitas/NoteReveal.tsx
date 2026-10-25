@@ -98,12 +98,14 @@ export function NoteReveal({ userId, householdId }: { userId: string; householdI
       )
       .subscribe();
 
-    // Las notitas programadas llegan por fecha: se revisan al volver a la app.
+    // Las notitas programadas llegan por día y hora: se revisan al volver a la app y cada minuto mientras está abierta.
     const onVisible = () => document.visibilityState === "visible" && loadUnread();
     document.addEventListener("visibilitychange", onVisible);
+    const interval = setInterval(onVisible, 60_000);
     return () => {
       supabase.removeChannel(channel);
       document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(interval);
     };
   }, [supabase, householdId, userId, loadUnread]);
 
@@ -194,7 +196,7 @@ export function NoteReveal({ userId, householdId }: { userId: string; householdI
                   />
                   <span
                     className="absolute left-1/2 top-[68px] flex size-12 -translate-x-1/2 rotate-[-8deg] items-center justify-center rounded-full border-2 border-white/40 text-lg font-bold text-white shadow-md"
-                    style={{ background: "#c8382f", fontFamily: "var(--font-display)" }}
+                    style={{ background: "#3f88c5", fontFamily: "var(--font-display)" }}
                   >
                     {nameOf(current.from_user).charAt(0).toUpperCase()}
                   </span>

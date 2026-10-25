@@ -58,7 +58,7 @@
     <script>
       // Lee la misma base de datos que usa la app (src/lib/viajes/offline.ts): mismo nombre y estructura.
       (function () {
-        var TYPES = { entrada: "Entradas", vuelo: "Vuelo", tren: "Tren y bus", alojamiento: "Alojamiento", seguro: "Seguro", documento: "Pasaporte y visa", otro: "Otro" };
+        var TYPES = { entrada: "Entradas", vuelo: "Vuelo", tren: "Tren y bus", alojamiento: "Alojamiento", seguro: "Seguro", documento: "Pasaporte y visa", reserva: "Reservas", salud: "Salud", hogar: "Hogar", identidad: "Identidad", otro: "Otro" };
         if (!window.indexedDB) return;
 
         function formatDate(iso) {

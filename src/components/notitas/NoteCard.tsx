@@ -52,13 +52,13 @@ export function NoteCard({ id, body, paper, sticker, from, date, tilted = true, 
           <span className={`${large ? "text-base" : "text-sm"} opacity-75`}>
             — {from} · {date}
           </span>
-          {/* Sello (hanko) con la inicial */}
+          {/* Sello celeste con la inicial de quien la escribió */}
           <span
             aria-hidden
             className={`flex shrink-0 rotate-[-9deg] items-center justify-center rounded-full border-2 border-white/40 font-bold text-white shadow-sm ${
               large ? "size-11 text-lg" : "size-9 text-base"
             }`}
-            style={{ background: "#c8382f", fontFamily: "var(--font-display)" }}
+            style={{ background: "#3f88c5", fontFamily: "var(--font-display)" }}
           >
             {from.charAt(0).toUpperCase()}
           </span>

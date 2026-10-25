@@ -1,5 +1,5 @@
 import {
-  CookingPot, Gift, Home, ListChecks, Mail, MapPin, ShoppingBasket, StickyNote, Wallet,
+  CookingPot, Gift, Vault, Home, ListChecks, Mail, MapPin, ShoppingBasket, StickyNote, Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -22,6 +22,7 @@ export const navModules: NavItem[] = [
   { href: "/wishlist", label: "Wishlist", icon: Gift, available: true },
   { href: "/notas", label: "Notas", icon: StickyNote, available: true },
   { href: "/tareas", label: "Tareas", icon: ListChecks, available: true },
+  { href: "/baul", label: "Baúl", icon: Vault, available: true },
 ];
 
 /** Lo que va siempre a la vista en la barra inferior del teléfono. */

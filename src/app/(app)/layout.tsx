@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { Sidebar } from "@/components/nav/Sidebar";
 import { TabBar } from "@/components/nav/TabBar";
 import { NoteReveal } from "@/components/notitas/NoteReveal";
+import { ProfileProvider } from "@/components/profile/ProfileProvider";
 import { InstallProvider } from "@/components/pwa/InstallProvider";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { requireHousehold } from "@/lib/household";
@@ -22,6 +23,7 @@ async function Notitas() {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <InstallProvider>
+    <ProfileProvider>
     <div className="min-h-dvh">
       <Suspense>
         <Sidebar />
@@ -38,6 +40,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <Notitas />
       </Suspense>
     </div>
+    </ProfileProvider>
     </InstallProvider>
   );
 }
