@@ -7,10 +7,12 @@ import { ShareCode } from "@/components/onboarding/ShareCode";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { createClient } from "@/lib/supabase/client";
+import { formatEUR } from "@/lib/gastos/money";
 import { timeAgo } from "@/lib/utils/time";
 import { MIN_SLOTS, WIDGETS, type WidgetDef, type WidgetId } from "./catalog";
 
 export type Stats = {
+  gastos: { state: "none" | "even" | "owe" | "owed"; cents: number; name: string | null };
   pendingCount: number;
   topPending: string[];
   recipesCount: number;
@@ -368,6 +370,23 @@ function WidgetBody({ def, stats }: { def: WidgetDef; stats: Stats }) {
           {stats.favoritesCount > 0
             ? `${stats.favoritesCount} ${stats.favoritesCount === 1 ? "favorita" : "favoritas"}`
             : `Última: ${stats.lastRecipe}`}
+        </p>
+      </>
+    );
+  }
+
+  if (def.id === "gastos") {
+    const g = stats.gastos;
+    if (g.state === "none") return <p className="mt-auto text-sm text-ink-soft">Apunten su primer gasto.</p>;
+    if (g.state === "even") return <p className="mt-auto font-display text-lg font-bold">Están a mano</p>;
+    return (
+      <>
+        <p className="text-xs text-ink-soft">{g.state === "owe" ? "Debes" : "Te deben"}</p>
+        <p className={`font-display text-3xl font-bold leading-none lg:text-4xl ${g.state === "owe" ? "text-hanko" : "text-forest"}`}>
+          {formatEUR(g.cents)}
+        </p>
+        <p className="mt-auto truncate pt-3 text-sm text-ink-soft">
+          {g.name ? (g.state === "owe" ? `a ${g.name}` : `${g.name} te debe`) : "entre varias personas"}
         </p>
       </>
     );

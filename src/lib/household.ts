@@ -29,5 +29,7 @@ export const requireHousehold = cache(async () => {
   const household = membership?.households as Household | null | undefined;
   if (!household) redirect("/hogar");
 
-  return { supabase, user: { id: userId }, household, displayName: profile?.display_name ?? "" };
+  const email = typeof data?.claims?.email === "string" ? data.claims.email : "";
+
+  return { supabase, user: { id: userId, email }, household, displayName: profile?.display_name ?? "" };
 });

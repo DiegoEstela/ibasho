@@ -1,4 +1,5 @@
 import {
+  Banknote, Bus, HeartPulse, Home, Plane, Receipt, ShoppingBasket, Ticket, Utensils,
   Apple, Baby, Bath, BookOpen, Beef, Candy, Car, Cake, Cat, Coffee, Cookie, Croissant, Dog, Dumbbell,
   Flower2, Gift, Hammer, Lamp, Leaf, Milk, Package, PartyPopper, PawPrint, Pill, Pizza, Salad,
   Shirt, Snowflake, SprayCan, Star, Wheat, Wine, Wrench,
@@ -9,6 +10,7 @@ export const ICONS: Record<string, LucideIcon> = {
   Apple, Beef, Milk, Croissant, Wheat, Wine, Snowflake, SprayCan, Bath, Package,
   PawPrint, Baby, Pill, Flower2, Wrench, Hammer, Shirt, Gift, Cookie, Coffee, Pizza, Candy,
   Cake, Salad, Lamp, BookOpen, Leaf, Cat, Dog, Car, Dumbbell, Star, PartyPopper,
+  Banknote, Bus, HeartPulse, Home, Plane, Receipt, ShoppingBasket, Ticket, Utensils,
 };
 
 /** Iconos que se pueden elegir al crear una categoría propia. */

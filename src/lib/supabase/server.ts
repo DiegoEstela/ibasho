@@ -1,9 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 import { cache } from "react";
 
 /** Una instancia por petición: así el proxy, el layout y la página comparten la misma sesión. */
 export const createClient = cache(async () => {
+  // La sesión depende de cada petición: se marca la ruta como dinámica antes de leerla.
+  await connection();
   const cookieStore = await cookies();
 
   return createServerClient(

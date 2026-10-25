@@ -35,7 +35,7 @@ const slides = [
       <InfoSlide
         icon={Wallet}
         tone="moss"
-        badge="Próximamente"
+        badge="Disponible"
         title="Gastos sin cálculos"
         text="Cada pago queda anotado y la app calcula quién le debe a quién. Incluye las compras con tarjeta en cuotas."
       />
