@@ -17,7 +17,8 @@ export async function POST(request: Request) {
   const body = String(input.body ?? "").slice(0, 160);
   // Solo rutas de la propia app.
   const url = typeof input.url === "string" && /^\/[a-z0-9/_-]*$/i.test(input.url) ? input.url : "/inicio";
-  const to = input.to && UUID.test(input.to) ? input.to : null;
+  // La prueba va solo a tus propios dispositivos, no a toda la casa.
+  const to = input.kind === "prueba" ? claims.claims.sub : input.to && UUID.test(input.to) ? input.to : null;
   if (!title) return NextResponse.json({ error: "Falta el título" }, { status: 400 });
 
   const kind = input.kind as PushKind;
