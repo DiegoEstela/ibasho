@@ -92,3 +92,31 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .slide-in { animation: none; }
 }
+
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes check-pop {
+  0% { transform: scale(0.6); }
+  60% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+.sheet-panel { animation: sheet-up 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.sheet-backdrop { animation: fade-in 0.2s ease-out; }
+.check-pop { animation: check-pop 0.3s ease-out; }
+
+@media (min-width: 1024px) {
+  .sheet-panel { animation: fade-in 0.2s ease-out; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-panel, .sheet-backdrop, .check-pop { animation: none; }
+}

@@ -24,7 +24,7 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
   const steps = [...recipe.recipe_steps].sort((a, b) => a.position - b.position);
 
   return (
-    <article className="max-w-2xl">
+    <article className="max-w-2xl lg:max-w-6xl">
       <Link href="/cocina" className="inline-flex min-h-11 items-center gap-1 text-sm text-ink-soft">
         <ChevronLeft size={18} /> Cocina
       </Link>
@@ -59,7 +59,9 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
         </div>
       )}
 
-      <h2 className="mt-8 font-display text-xl font-bold">Ingredientes</h2>
+      <div className="lg:mt-8 lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-10">
+      <div>
+      <h2 className="mt-8 font-display text-xl font-bold lg:mt-0">Ingredientes</h2>
       {ingredients.length ? (
         <ul className="mt-3 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
           {ingredients.map((i) => (
@@ -73,7 +75,9 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
         <p className="mt-2 text-sm text-ink-soft">Sin ingredientes.</p>
       )}
 
-      <h2 className="mt-8 font-display text-xl font-bold">Pasos</h2>
+      </div>
+      <div>
+      <h2 className="mt-8 font-display text-xl font-bold lg:mt-0">Pasos</h2>
       {steps.length ? (
         <ol className="mt-3 flex flex-col gap-3">
           {steps.map((s, n) => (
@@ -88,6 +92,9 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
       ) : (
         <p className="mt-2 text-sm text-ink-soft">Sin pasos.</p>
       )}
+
+      </div>
+      </div>
 
       {recipe.notes && (
         <>

@@ -25,7 +25,7 @@ export default function NuevaRecetaPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   return (
-    <section className="max-w-2xl">
+    <section className="max-w-2xl lg:max-w-5xl">
       <Link href="/cocina" className="inline-flex min-h-11 items-center gap-1 text-sm text-ink-soft">
         <ChevronLeft size={18} /> Cocina
       </Link>
@@ -36,8 +36,8 @@ export default function NuevaRecetaPage({
           <ErrorMessage searchParams={searchParams} />
         </Suspense>
 
-        <form action={createRecipe} className="flex flex-col gap-5">
-          <div>
+        <form action={createRecipe} className="flex flex-col gap-5 lg:grid lg:grid-cols-2 lg:gap-x-8 lg:gap-y-5">
+          <div className="lg:col-span-2">
             <label className={label} htmlFor="name">Nombre</label>
             <input id="name" name="name" className={input} placeholder="Tortilla de patatas" required maxLength={120} />
           </div>
@@ -71,7 +71,7 @@ export default function NuevaRecetaPage({
             <textarea
               id="ingredients"
               name="ingredients"
-              rows={6}
+              rows={8}
               className={`${field} py-3`}
               placeholder={"4 huevos\n500 g de patatas\n1/2 cebolla\n1 pizca de sal"}
             />
@@ -82,18 +82,18 @@ export default function NuevaRecetaPage({
             <textarea
               id="steps"
               name="steps"
-              rows={6}
+              rows={8}
               className={`${field} py-3`}
               placeholder={"Pelar y cortar las patatas.\nFreír a fuego medio.\nBatir los huevos y mezclar."}
             />
           </div>
 
-          <div>
+          <div className="lg:col-span-2">
             <label className={label} htmlFor="notes">Notas</label>
             <textarea id="notes" name="notes" rows={3} className={`${field} py-3`} />
           </div>
 
-          <button className="min-h-12 rounded-2xl bg-forest px-8 text-base font-medium text-surface shadow-sm transition active:scale-95">
+          <button className="min-h-12 rounded-2xl bg-forest px-8 text-base font-medium text-surface shadow-sm transition active:scale-95 lg:col-span-2 lg:w-fit">
             Guardar receta
           </button>
         </form>
