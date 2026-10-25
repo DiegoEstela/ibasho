@@ -4,18 +4,27 @@ import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-type Method = "magic" | "password";
+type Mode = "login" | "signup" | "magic";
 
 const inputClass =
-  "min-h-11 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest";
+  "min-h-12 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest";
+
+function friendlyError(message: string) {
+  const m = message.toLowerCase();
+  if (m.includes("invalid login")) return "El correo o la contraseña no son correctos.";
+  if (m.includes("already registered")) return "Ya existe una cuenta con ese correo. Prueba a iniciar sesión.";
+  if (m.includes("not confirmed")) return "Confirma tu correo antes de entrar: te enviamos un enlace.";
+  if (m.includes("rate limit")) return "Demasiados intentos. Espera unos minutos y vuelve a probar.";
+  if (m.includes("password")) return "La contraseña debe tener al menos 6 caracteres.";
+  return "No pudimos completarlo. Inténtalo de nuevo.";
+}
 
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get("next") ?? "/inicio";
 
-  const [method, setMethod] = useState<Method>("magic");
-  const [signUp, setSignUp] = useState(false);
+  const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -27,6 +36,11 @@ export function LoginForm() {
   const redirectTo = () =>
     `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
 
+  function switchMode(m: Mode) {
+    setMode(m);
+    setMessage(null);
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -34,28 +48,25 @@ export function LoginForm() {
     const supabase = createClient();
 
     try {
-      if (method === "magic") {
+      if (mode === "magic") {
         const { error } = await supabase.auth.signInWithOtp({
           email,
-          options: {
-            emailRedirectTo: redirectTo(),
-            data: name ? { display_name: name } : undefined,
-          },
+          options: { emailRedirectTo: redirectTo() },
         });
         if (error) throw error;
-        setMessage({ type: "ok", text: "Te hemos enviado un enlace. Revisa tu correo." });
+        setMessage({ type: "ok", text: "Listo. Te enviamos un enlace: ábrelo desde tu correo para entrar." });
         return;
       }
 
-      if (signUp) {
+      if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: redirectTo(), data: { display_name: name } },
+          options: { emailRedirectTo: redirectTo(), data: { display_name: name.trim() } },
         });
         if (error) throw error;
         if (!data.session) {
-          setMessage({ type: "ok", text: "Cuenta creada. Confirma tu correo para entrar." });
+          setMessage({ type: "ok", text: "Cuenta creada. Confirma tu correo con el enlace que te enviamos." });
           return;
         }
       } else {
@@ -65,22 +76,18 @@ export function LoginForm() {
       router.replace(next);
       router.refresh();
     } catch (err) {
-      const text = err instanceof Error ? err.message : "Ha ocurrido un error.";
-      setMessage({ type: "error", text });
+      setMessage({ type: "error", text: friendlyError(err instanceof Error ? err.message : "") });
     } finally {
       setLoading(false);
     }
   }
 
-  const tab = (m: Method, label: string) => (
+  const tab = (m: "login" | "signup", label: string) => (
     <button
       type="button"
-      onClick={() => {
-        setMethod(m);
-        setMessage(null);
-      }}
+      onClick={() => switchMode(m)}
       className={`min-h-11 flex-1 rounded-lg text-sm font-medium transition ${
-        method === m ? "bg-surface text-forest shadow-sm" : "text-ink-soft"
+        mode === m ? "bg-surface text-forest shadow-sm" : "text-ink-soft"
       }`}
     >
       {label}
@@ -89,20 +96,29 @@ export function LoginForm() {
 
   return (
     <form onSubmit={onSubmit} className="flex w-full flex-col gap-4">
-      <div className="flex gap-1 rounded-xl bg-washi-deep p-1">
-        {tab("magic", "Enlace por email")}
-        {tab("password", "Contraseña")}
-      </div>
+      {mode === "magic" ? (
+        <div>
+          <h1 className="font-display text-xl font-bold">Entrar con un enlace</h1>
+          <p className="mt-1 text-sm text-ink-soft">
+            Te enviamos un enlace al correo y entras con un toque, sin contraseña.
+          </p>
+        </div>
+      ) : (
+        <div className="flex gap-1 rounded-xl bg-washi-deep p-1">
+          {tab("login", "Iniciar sesión")}
+          {tab("signup", "Crear cuenta")}
+        </div>
+      )}
 
-      {(signUp || method === "magic") && (
+      {mode === "signup" && (
         <input
           className={inputClass}
           type="text"
-          placeholder={method === "magic" ? "Tu nombre (si es la primera vez)" : "Tu nombre"}
+          placeholder="Tu nombre"
           autoComplete="given-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          required={signUp && method === "password"}
+          required
         />
       )}
 
@@ -116,12 +132,12 @@ export function LoginForm() {
         required
       />
 
-      {method === "password" && (
+      {mode !== "magic" && (
         <input
           className={inputClass}
           type="password"
-          placeholder="Contraseña"
-          autoComplete={signUp ? "new-password" : "current-password"}
+          placeholder={mode === "signup" ? "Contraseña (mínimo 6 caracteres)" : "Contraseña"}
+          autoComplete={mode === "signup" ? "new-password" : "current-password"}
           minLength={6}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -143,26 +159,24 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={loading}
-        className="min-h-11 rounded-2xl bg-forest px-8 text-base font-medium text-surface shadow-sm transition active:scale-95 disabled:opacity-60"
+        className="min-h-12 rounded-2xl bg-forest px-8 text-base font-medium text-surface shadow-sm transition active:scale-95 disabled:opacity-60"
       >
         {loading
           ? "Un momento…"
-          : method === "magic"
+          : mode === "magic"
             ? "Enviarme el enlace"
-            : signUp
+            : mode === "signup"
               ? "Crear cuenta"
               : "Entrar"}
       </button>
 
-      {method === "password" && (
-        <button
-          type="button"
-          onClick={() => setSignUp((v) => !v)}
-          className="min-h-11 text-sm text-ink-soft underline-offset-4 hover:underline"
-        >
-          {signUp ? "Ya tengo cuenta" : "Crear una cuenta nueva"}
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => switchMode(mode === "magic" ? "login" : "magic")}
+        className="min-h-11 text-sm text-ink-soft underline-offset-4 hover:underline"
+      >
+        {mode === "magic" ? "Prefiero usar contraseña" : "Prefiero entrar con un enlace por email"}
+      </button>
     </form>
   );
 }

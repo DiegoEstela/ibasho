@@ -13,9 +13,9 @@ export async function createHousehold(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("create_household", { p_name: name });
-  if (error) fail(error.message);
+  if (error) fail("No pudimos crear el hogar. Inténtalo de nuevo.");
 
-  redirect("/inicio");
+  redirect("/hogar/listo");
 }
 
 export async function joinHousehold(formData: FormData) {
@@ -24,7 +24,7 @@ export async function joinHousehold(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("join_household", { p_code: code });
-  if (error) fail(error.message);
+  if (error) fail("Ese código no es válido. Revisa que esté bien escrito.");
 
-  redirect("/inicio");
+  redirect("/bienvenida");
 }

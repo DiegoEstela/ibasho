@@ -34,6 +34,17 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
+  // Portada: con sesión directo a la app; si ya vio la presentación, directo al acceso.
+  if (pathname === "/") {
+    const target = user ? "/inicio" : request.cookies.get("ibasho_intro") ? "/login" : null;
+    if (target) {
+      const url = request.nextUrl.clone();
+      url.pathname = target;
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+  }
+
   if (!user && !isPublic(pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";

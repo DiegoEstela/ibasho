@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { navItems } from "./items";
 
-/** Barra de pestañas inferior para móvil (por debajo de lg). */
+/** Barra de pestañas inferior para teléfono (por debajo de lg). */
 export function TabBar() {
   const pathname = usePathname();
 
