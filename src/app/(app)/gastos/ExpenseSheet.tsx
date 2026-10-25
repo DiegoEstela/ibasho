@@ -10,8 +10,10 @@ import { createClient } from "@/lib/supabase/client";
 import { cardLabel } from "@/lib/tarjetas/labels";
 import type { Participant } from "@/lib/gastos/balance";
 import { EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
+import { CURRENCIES, formatMoney, parseRate, toEuroCents } from "@/lib/gastos/currency";
 import { evenPercents, formatEUR, parseAmount, splitByPercent, splitEqual, toCents } from "@/lib/gastos/money";
-import type { Expense, Split } from "./types";
+import { fetchRate } from "../viajes/[id]/actions";
+import { formatDate, type Expense, type Split } from "./types";
 
 type Mode = "equal" | "percent" | "exact";
 
@@ -26,6 +28,8 @@ type Props = {
   meId: string | null;
   /** Tarjetas registradas; solo se puede pagar con una de ellas. */
   cards: PayCard[];
+  /** Solo en gastos de viaje: activa las otras monedas y oculta las tarjetas. `currency` es la del destino. */
+  trip?: { currency: string } | null;
   /** Gasto que se edita; null para crear uno nuevo. */
   expense: Expense | null;
   splits: Split[];
@@ -52,7 +56,7 @@ export function ExpenseSheet(props: Props) {
   );
 }
 
-function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSaved, onDelete }: Props) {
+function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits, onSaved, onDelete }: Props) {
   const ids = participants.map((p) => p.id);
 
   // Si el gasto ya existe, deduce cómo se repartió para mostrarlo igual.
@@ -71,11 +75,18 @@ function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSa
   })();
 
   const [description, setDescription] = useState(expense?.description ?? "");
-  const [amountText, setAmountText] = useState(expense ? String(expense.amount).replace(".", ",") : "");
+  const [currency, setCurrency] = useState(expense?.currency ?? trip?.currency ?? "EUR");
+  const [amountText, setAmountText] = useState(
+    expense ? String(expense.currency !== "EUR" && expense.original_amount ? expense.original_amount : expense.amount).replace(".", ",") : "",
+  );
+  const [rateText, setRateText] = useState(expense?.exchange_rate ? String(expense.exchange_rate).replace(".", ",") : "");
+  const [rateNote, setRateNote] = useState("");
+  const [fetchingRate, setFetchingRate] = useState(false);
   const [date, setDate] = useState(expense?.expense_date ?? todayISO());
   const [category, setCategory] = useState(expense?.category ?? "Supermercado");
   const [cardId, setCardId] = useState(expense?.card_id ?? "");
-  const [paidBy, setPaidBy] = useState(expense ? (expense.paid_by ?? meId ?? ids[0] ?? "") : (meId ?? ids[0] ?? ""));
+  // "" = sin pagador (sale de una tarjeta compartida); solo se usa con una tarjeta sin titular.
+  const [paidBy, setPaidBy] = useState(expense ? (expense.paid_by ?? "") : (meId ?? ids[0] ?? ""));
   const [mode, setMode] = useState<Mode>(initial.mode);
   const [included, setIncluded] = useState<Set<string>>(initial.included);
   const [percents, setPercents] = useState<Record<string, string>>(() => evenPercents(ids));
@@ -86,16 +97,51 @@ function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSa
   const card = cards.find((c) => c.id === cardId);
   // Una tarjeta sin titular es de los dos: el dinero sale de la cuenta común y no hay un "pagador".
   const sharedCard = !!card && card.owner_user_id === null;
+  // En el hogar (dos personas) una tarjeta compartida nunca tiene pagador; en un viaje, con amigos de por medio, se puede elegir.
+  const forcedPool = sharedCard && !trip;
 
   function chooseCard(id: string) {
     setCardId(id);
     const chosen = cards.find((c) => c.id === id);
     const owner = chosen?.owner_user_id ? participants.find((p) => p.user_id === chosen.owner_user_id) : undefined;
     if (owner) setPaidBy(owner.id);
+    else if (chosen && trip) setPaidBy(""); // tarjeta compartida en un viaje: por defecto, sin pagador
+    else if (!paidBy) setPaidBy(meId ?? ids[0] ?? "");
   }
 
-  const amount = parseAmount(amountText);
+  // Otra moneda: se escribe el importe en esa moneda y se convierte a euros con la cotización.
+  const foreign = !!trip && currency !== "EUR";
+  const typed = parseAmount(amountText);
+  const rate = parseRate(rateText);
+  const amount = foreign ? (typed && rate ? toEuroCents(typed, rate) / 100 : null) : typed;
   const totalCents = amount ? toCents(amount) : 0;
+
+  const currencyOptions = [
+    "EUR",
+    ...(trip && trip.currency !== "EUR" ? [trip.currency] : []),
+    ...CURRENCIES.map((c) => c.code).filter((c) => c !== "EUR" && c !== trip?.currency),
+    ...(currency !== "EUR" && !CURRENCIES.some((c) => c.code === currency) && currency !== trip?.currency ? [currency] : []),
+  ];
+
+  async function loadRate(code: string, on: string) {
+    setFetchingRate(true);
+    setRateNote("");
+    const result = await fetchRate(code, on);
+    setFetchingRate(false);
+    if (result.ok) {
+      setRateText(String(result.perEuro).replace(".", ","));
+      setRateNote(`Cotización del ${formatDate(result.date)} (Banco Central Europeo)`);
+    } else {
+      setRateNote(result.message);
+    }
+  }
+
+  async function chooseCurrency(code: string) {
+    setCurrency(code);
+    setRateText("");
+    setRateNote("");
+    if (code !== "EUR") await loadRate(code, date);
+  }
 
   // Diferencia entre lo repartido y el importe, para guiar mientras se escribe.
   const exactSum = ids.reduce((sum, id) => sum + toCents(parseAmount(exacts[id] ?? "") ?? 0), 0);
@@ -123,6 +169,8 @@ function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSa
     e.preventDefault();
     setError("");
     if (!description.trim()) return setError("Escribe en qué fue el gasto.");
+    if (!sharedCard && !paidBy) return setError("Elige quién pagó el gasto.");
+    if (foreign && !rate) return setError("Escribe la cotización: cuántas unidades de esa moneda equivalen a 1 euro.");
     if (!amount || amount <= 0) return setError("Escribe un importe válido, por ejemplo 12,50.");
 
     const result = buildSplits();
@@ -136,8 +184,11 @@ function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSa
       p_amount: amount,
       p_date: date,
       p_category: category,
-      p_paid_by: sharedCard ? null : paidBy,
+      p_paid_by: forcedPool ? null : paidBy || null,
       p_card: cardId || null,
+      p_currency: foreign ? currency : "EUR",
+      p_original_amount: foreign ? typed : null,
+      p_rate: foreign ? rate : null,
       p_splits: Object.entries(result).map(([participant_id, cents]) => ({ participant_id, amount: cents / 100 })),
     });
     setSaving(false);
@@ -170,7 +221,7 @@ function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSa
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={label} htmlFor="g-amount">Importe (€)</label>
+          <label className={label} htmlFor="g-amount">Importe {trip ? `(${currency})` : "(€)"}</label>
           <input id="g-amount" className={field} inputMode="decimal" value={amountText} onChange={(e) => setAmountText(e.target.value)} placeholder="0,00" />
         </div>
         <div>
@@ -178,6 +229,56 @@ function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSa
           <input id="g-date" type="date" className={field} value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
       </div>
+
+      {trip && (
+        <div>
+          <label className={label} htmlFor="g-currency">Moneda</label>
+          <select id="g-currency" className={field} value={currency} onChange={(e) => chooseCurrency(e.target.value)}>
+            {currencyOptions.map((code) => (
+              <option key={code} value={code}>
+                {code} · {CURRENCIES.find((c) => c.code === code)?.name ?? "Otra moneda"}
+              </option>
+            ))}
+          </select>
+
+          {foreign && (
+            <div className="mt-2 rounded-2xl bg-forest/10 p-3.5">
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 text-sm text-ink-soft">1 € =</span>
+                <input
+                  className={`${field} min-h-10 flex-1`}
+                  inputMode="decimal"
+                  value={rateText}
+                  onChange={(e) => {
+                    setRateText(e.target.value);
+                    setRateNote("");
+                  }}
+                  placeholder="Cotización"
+                  aria-label={`Cuántos ${currency} son 1 euro`}
+                />
+                <span className="shrink-0 text-sm text-ink-soft">{currency}</span>
+                <button
+                  type="button"
+                  onClick={() => loadRate(currency, date)}
+                  disabled={fetchingRate}
+                  className="min-h-10 shrink-0 rounded-xl border border-line bg-surface px-3 text-xs font-medium text-forest transition active:scale-95 disabled:opacity-60"
+                >
+                  {fetchingRate ? "Buscando…" : "Actualizar"}
+                </button>
+              </div>
+              {rateNote && <p className="mt-1.5 text-xs text-ink-soft">{rateNote}</p>}
+              {typed && rate ? (
+                <p className="mt-1.5 text-sm">
+                  {formatMoney(typed, currency)} <span className="text-ink-soft">equivale a</span>{" "}
+                  <span className="font-display text-base font-bold text-forest">{formatEUR(totalCents)}</span>
+                </p>
+              ) : (
+                <p className="mt-1.5 text-xs text-ink-soft">Escribe el importe y la cotización para ver cuánto son en euros.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <p className={label}>Categoría</p>
@@ -226,7 +327,7 @@ function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSa
         )}
       </div>
 
-      {sharedCard ? (
+      {forcedPool ? (
         <p className="rounded-xl bg-moss/15 px-3.5 py-3 text-sm text-forest">
           Pagado con la tarjeta compartida: sale del dinero de los dos, así que no crea deudas entre ustedes.
         </p>
@@ -234,6 +335,7 @@ function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSa
         <div>
           <label className={label} htmlFor="g-paid">¿Quién pagó?</label>
           <select id="g-paid" className={field} value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>
+            {sharedCard && <option value="">Cuenta compartida (no crea deudas)</option>}
             {participants.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.user_id && p.id === meId ? `${p.name} (tú)` : p.name}
@@ -248,7 +350,7 @@ function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSa
         <div className="flex gap-1 rounded-xl bg-washi-deep p-1" role="tablist" aria-label="Forma de dividir">
           {segment("equal", "Iguales")}
           {segment("percent", "Porcentaje")}
-          {segment("exact", "Importes")}
+          {segment("exact", foreign ? "Importes (€)" : "Importes")}
         </div>
 
         <ul className="mt-2 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">

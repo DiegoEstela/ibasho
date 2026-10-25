@@ -9,9 +9,11 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { createClient } from "@/lib/supabase/client";
 import { formatEUR } from "@/lib/gastos/money";
 import { timeAgo } from "@/lib/utils/time";
+import { formatRange, tripPhase } from "@/lib/viajes/dates";
 import { MIN_SLOTS, WIDGETS, type WidgetDef, type WidgetId } from "./catalog";
 
 export type Stats = {
+  viajes: { id: string; name: string; emoji: string | null; start_date: string | null; end_date: string | null }[];
   mensajes: { hasPartner: boolean; unread: number; latest: { body: string; from: string } | null };
   tarjeta: { hasData: boolean; pendingCents: number; nextDue: string | null; nextCents: number };
   gastos: { state: "none" | "even" | "owe" | "owed"; cents: number; name: string | null };
@@ -91,6 +93,12 @@ export function Dashboard({
 }: Props) {
   const [supabase] = useState(() => createClient());
   const [now] = useState(() => Date.now());
+  // Hoy según el dispositivo ("aaaa-mm-dd"), para calcular cuenta atrás y fases de los viajes.
+  const today = (() => {
+    const d = new Date(now);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  })();
   const [widgets, setWidgets] = useState<WidgetId[]>(initialWidgets);
   const [editMode, setEditMode] = useState(false);
   const [sheet, setSheet] = useState<"avisos" | "compartir" | "catalogo" | null>(null);
@@ -184,7 +192,7 @@ export function Dashboard({
 
       <div className="mt-2 grid grid-cols-2 gap-2.5 lg:mt-3 lg:grid-cols-4 lg:gap-5">
         {chosen.map((def) => (
-          <WidgetCard key={def.id} def={def} stats={stats} editMode={editMode} onRemove={() => remove(def.id)} />
+          <WidgetCard key={def.id} def={def} stats={stats} today={today} editMode={editMode} onRemove={() => remove(def.id)} />
         ))}
 
         {Array.from({ length: emptySlots }, (_, n) => (
@@ -296,11 +304,13 @@ function AddTile({ label, onClick }: { label: string; onClick: () => void }) {
 function WidgetCard({
   def,
   stats,
+  today,
   editMode,
   onRemove,
 }: {
   def: WidgetDef;
   stats: Stats;
+  today: string;
   editMode: boolean;
   onRemove: () => void;
 }) {
@@ -319,7 +329,7 @@ function WidgetCard({
         <span className="font-display text-sm font-bold lg:text-base">{def.label}</span>
       </div>
       <div className="mt-2 flex flex-1 flex-col lg:mt-3">
-        <WidgetBody def={def} stats={stats} />
+        <WidgetBody def={def} stats={stats} today={today} />
       </div>
     </div>
   );
@@ -349,7 +359,7 @@ function WidgetCard({
   );
 }
 
-function WidgetBody({ def, stats }: { def: WidgetDef; stats: Stats }) {
+function WidgetBody({ def, stats, today }: { def: WidgetDef; stats: Stats; today: string }) {
   if (def.id === "compras") {
     if (stats.pendingCount === 0) {
       return <p className="mt-auto font-display text-lg font-bold">Todo comprado</p>;
@@ -375,6 +385,27 @@ function WidgetBody({ def, stats }: { def: WidgetDef; stats: Stats }) {
           {stats.favoritesCount > 0
             ? `${stats.favoritesCount} ${stats.favoritesCount === 1 ? "favorita" : "favoritas"}`
             : `Última: ${stats.lastRecipe}`}
+        </p>
+      </>
+    );
+  }
+
+  if (def.id === "viajes") {
+    // El que está en curso; si no hay, el próximo más cercano.
+    const phases = stats.viajes.map((t) => ({ t, phase: tripPhase(t.start_date, t.end_date, today) }));
+    const pick =
+      phases.find((x) => x.phase.kind === "en-curso") ??
+      phases.filter((x) => x.phase.kind === "proximo").sort((a, b) => (a.t.start_date ?? "").localeCompare(b.t.start_date ?? ""))[0] ??
+      phases.find((x) => x.phase.kind === "sin-fechas");
+    if (!pick) {
+      return <p className="mt-auto text-sm text-ink-soft">{stats.viajes.length > 0 ? "Sin viajes por delante." : "Planifiquen su primer viaje."}</p>;
+    }
+    return (
+      <>
+        <p className="text-3xl leading-none" aria-hidden>{pick.t.emoji || "🧳"}</p>
+        <p className="mt-2 line-clamp-2 font-display text-[15px] font-bold leading-snug">{pick.t.name}</p>
+        <p className="mt-auto truncate pt-2 text-xs text-ink-soft">
+          {pick.phase.label} · {formatRange(pick.t.start_date, pick.t.end_date)}
         </p>
       </>
     );

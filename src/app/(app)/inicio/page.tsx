@@ -14,7 +14,7 @@ async function Resumen() {
   const { data: claims } = await supabase.auth.getClaims();
   const userId = claims?.claims?.sub ?? "";
 
-  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements, cInstallments, cShares, nNotes, nReads] =
+  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements, cInstallments, cShares, nNotes, nReads, vTrips] =
     await Promise.all([
       requireHousehold(),
       supabase.from("shopping_items").select("name").eq("done", false).order("created_at", { ascending: false }).limit(200),
@@ -38,6 +38,7 @@ async function Resumen() {
       supabase.from("card_purchase_shares").select("purchase_id, user_id, percent").limit(5000),
       supabase.from("daily_messages").select("id, from_user, body, deliver_on, created_at").neq("from_user", userId).order("deliver_on", { ascending: false }).order("created_at", { ascending: false }).limit(30),
       supabase.from("daily_message_reads").select("message_id").eq("user_id", userId),
+      supabase.from("trips").select("id, name, emoji, start_date, end_date").order("start_date", { ascending: true, nullsFirst: false }).limit(50),
     ]);
 
   // Si la migración 0004 aún no se ejecutó, la columna no existe y se usan los widgets por defecto.
@@ -101,7 +102,11 @@ async function Resumen() {
     latest: received[0] ? { body: received[0].body, from: sender(received[0].from_user) } : null,
   };
 
+  // Viajes: el cliente elige cuál mostrar según la fecha de hoy (si la migración 0010 no está, la lista queda vacía).
+  const viajes = ((vTrips.data ?? []) as { id: string; name: string; emoji: string | null; start_date: string | null; end_date: string | null }[]);
+
   const stats: Stats = {
+    viajes,
     mensajes,
     tarjeta,
     gastos,

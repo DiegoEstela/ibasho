@@ -18,7 +18,7 @@ export const navModules: NavItem[] = [
   { href: "/cocina", label: "Cocina", icon: CookingPot, available: true },
   { href: "/gastos", label: "Gastos", icon: Wallet, available: true },
   { href: "/notitas", label: "Notitas", icon: Mail, available: true },
-  { href: "/viajes", label: "Viajes", icon: MapPin, available: false },
+  { href: "/viajes", label: "Viajes", icon: MapPin, available: true },
   { href: "/wishlist", label: "Wishlist", icon: Gift, available: false },
   { href: "/notas", label: "Notas", icon: StickyNote, available: false },
   { href: "/tareas", label: "Tareas", icon: ListChecks, available: false },

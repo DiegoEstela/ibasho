@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { clearOfflineDocs } from "@/lib/viajes/offline";
 
 type Props = {
   /** "row" se integra en listas y menús; "button" es un botón con borde. */
@@ -13,6 +14,8 @@ export function SignOutButton({ variant = "button" }: Props) {
   const router = useRouter();
 
   async function signOut() {
+    // Las copias de documentos del viaje no se quedan en el teléfono cuando se cierra sesión.
+    await clearOfflineDocs();
     await createClient().auth.signOut();
     router.replace("/login");
     router.refresh();

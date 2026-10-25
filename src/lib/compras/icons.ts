@@ -39,3 +39,8 @@ export function iconFor(key: string): LucideIcon {
 export function colorFor(key: string): string {
   return COLORS[key] ?? COLORS.forest;
 }
+
+/** Fondo suave de un color del tema, para los recuadros de iconos. */
+export function tint(key: string, percent = 18): string {
+  return `color-mix(in srgb, ${colorFor(key)} ${percent}%, transparent)`;
+}

@@ -23,7 +23,7 @@ const slides = [
       <InfoSlide
         icon={MapPin}
         tone="sky"
-        badge="Próximamente"
+        badge="Disponible"
         title="Viajes sin líos"
         text="Gastos a medias, reservas y entradas a mano, y la lista de lugares que quieren conocer."
       />

@@ -27,6 +27,29 @@ export async function ensureGroupId(
   return { error: { step: "crear el grupo de gastos", detail: fmt(error ?? { message: "sin datos" }) } };
 }
 
+/** Devuelve el grupo de gastos de un viaje, creándolo la primera vez. */
+export async function ensureTripGroup(
+  supabase: SupabaseClient,
+  args: { householdId: string; tripId: string; name: string },
+): Promise<{ groupId: string } | SetupFailure> {
+  const find = () => supabase.from("expense_groups").select("id").eq("trip_id", args.tripId).eq("kind", "trip").maybeSingle();
+
+  const { data: existing } = await find();
+  if (existing) return { groupId: existing.id as string };
+
+  const { data, error } = await supabase
+    .from("expense_groups")
+    .insert({ household_id: args.householdId, kind: "trip", name: args.name, trip_id: args.tripId })
+    .select("id")
+    .single();
+  if (!error && data) return { groupId: data.id as string };
+
+  // Si dos personas abren el viaje a la vez, la otra ya lo habrá creado: se vuelve a buscar.
+  const { data: again } = await find();
+  if (again) return { groupId: again.id as string };
+  return { error: { step: "crear los gastos del viaje", detail: fmt(error ?? { message: "sin datos" }) } };
+}
+
 /** Garantiza que cada miembro del hogar sea participante del grupo (por ejemplo, quien acaba de unirse). */
 export async function syncParticipants(
   supabase: SupabaseClient,

@@ -9,6 +9,11 @@ export type Expense = {
   paid_by: string | null;
   card_id: string | null;
   notes: string | null;
+  /** Moneda en que se pagó; el importe `amount` siempre está en euros. */
+  currency: string;
+  original_amount: number | null;
+  /** Unidades de la moneda por cada 1 euro. */
+  exchange_rate: number | null;
   created_at: string;
 };
 

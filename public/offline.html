@@ -2,35 +2,131 @@
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Sin conexión · Ibasho</title>
     <style>
-      :root { color-scheme: light dark; }
+      :root { color-scheme: light dark; --bg: #f7f0e1; --card: #fffaf0; --ink: #3a3328; --soft: #7a6f5d; --line: rgba(58,51,40,.14); --green: #3f6b4a; --pink: #f2b8c6; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #11192b; --card: #1a2540; --ink: #f3e9d2; --soft: #a9b0c4; --line: rgba(243,233,210,.16); --green: #7fb58c; } }
+      * { box-sizing: border-box; }
       body {
-        margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 24px;
-        text-align: center; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-        background: #f7f0e1; color: #3a3328;
+        margin: 0; min-height: 100dvh; padding: max(24px, env(safe-area-inset-top)) 20px 32px;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; background: var(--bg); color: var(--ink);
       }
-      img { width: 88px; height: 88px; }
-      h1 { font-size: 1.5rem; margin: 16px 0 8px; }
-      p { margin: 0 0 20px; color: #7a6f5d; }
-      button {
-        min-height: 44px; padding: 0 28px; border: 0; border-radius: 16px;
-        background: #3f6b4a; color: #fffaf0; font-size: 1rem; cursor: pointer;
-      }
-      @media (prefers-color-scheme: dark) {
-        body { background: #11192b; color: #f3e9d2; }
-        p { color: #a9b0c4; }
-        button { background: #7fb58c; color: #11192b; }
-      }
+      main { max-width: 440px; margin: 0 auto; }
+      header { text-align: center; padding-top: 12px; }
+      header img { width: 72px; height: 72px; }
+      h1 { font-size: 1.4rem; margin: 12px 0 6px; }
+      p { margin: 0; color: var(--soft); line-height: 1.45; }
+      button { font: inherit; }
+      .retry { margin-top: 16px; min-height: 44px; padding: 0 28px; border: 0; border-radius: 16px; background: var(--green); color: var(--card); font-size: 1rem; cursor: pointer; }
+      section { margin-top: 28px; }
+      h2 { font-size: 1.05rem; margin: 0 0 4px; }
+      h3 { margin: 18px 4px 6px; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--soft); font-weight: 600; }
+      ul { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+      li + li { border-top: 1px solid var(--line); }
+      li button { display: block; width: 100%; min-height: 56px; padding: 10px 14px; text-align: left; background: none; border: 0; color: inherit; cursor: pointer; }
+      li strong { display: block; font-weight: 600; font-size: .95rem; }
+      li span { display: block; margin-top: 2px; font-size: .78rem; color: var(--soft); }
+      #viewer { position: fixed; inset: 0; z-index: 10; display: none; flex-direction: column; background: rgba(0,0,0,.88); padding: max(12px, env(safe-area-inset-top)) 12px 12px; }
+      #viewer.open { display: flex; }
+      #viewer img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
+      #viewer button { align-self: flex-end; min-height: 44px; padding: 0 20px; border: 0; border-radius: 14px; background: var(--card); color: var(--ink); cursor: pointer; margin-bottom: 8px; }
     </style>
   </head>
   <body>
     <main>
-      <img src="/icons/logo.svg" alt="Ibasho" />
-      <h1>Sin conexión</h1>
-      <p>No hay internet ahora mismo. Vuelve a intentarlo en un momento.</p>
-      <button onclick="location.reload()">Reintentar</button>
+      <header>
+        <img src="/icons/logo.svg" alt="Ibasho" />
+        <h1>Sin conexión</h1>
+        <p>No hay internet ahora mismo. Vuelve a intentarlo en un momento.</p>
+        <button class="retry" onclick="location.reload()">Reintentar</button>
+      </header>
+
+      <!-- Documentos guardados en este teléfono: se muestran solo si hay alguno -->
+      <section id="docs" hidden>
+        <h2>Tus documentos guardados</h2>
+        <p>Estas copias están en tu teléfono y se abren sin internet.</p>
+        <div id="groups"></div>
+      </section>
     </main>
+
+    <div id="viewer" role="dialog" aria-modal="true" aria-label="Documento">
+      <button id="close" type="button">Cerrar</button>
+      <img id="viewer-img" alt="" />
+    </div>
+
+    <script>
+      // Lee la misma base de datos que usa la app (src/lib/viajes/offline.ts): mismo nombre y estructura.
+      (function () {
+        var TYPES = { entrada: "Entradas", vuelo: "Vuelo", tren: "Tren y bus", alojamiento: "Alojamiento", seguro: "Seguro", documento: "Pasaporte y visa", otro: "Otro" };
+        if (!window.indexedDB) return;
+
+        function formatDate(iso) {
+          var p = String(iso).split("-");
+          return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : "";
+        }
+
+        function open(doc) {
+          var url = URL.createObjectURL(doc.blob);
+          if (String(doc.mime).indexOf("image/") === 0) {
+            document.getElementById("viewer-img").src = url;
+            document.getElementById("viewer").className = "open";
+          } else {
+            window.open(url, "_blank");
+          }
+        }
+
+        document.getElementById("close").addEventListener("click", function () {
+          document.getElementById("viewer").className = "";
+          document.getElementById("viewer-img").removeAttribute("src");
+        });
+
+        var request = indexedDB.open("ibasho-offline", 1);
+        request.onupgradeneeded = function () {
+          var store = request.result.createObjectStore("docs", { keyPath: "id" });
+          store.createIndex("tripId", "tripId");
+        };
+        request.onerror = function () {};
+        request.onsuccess = function () {
+          var db = request.result;
+          var all = db.transaction("docs", "readonly").objectStore("docs").getAll();
+          all.onsuccess = function () {
+            var docs = all.result || [];
+            db.close(); // No dejar la conexión abierta: bloquearía los cambios que haga la app.
+            if (docs.length === 0) return;
+
+            // Agrupa por viaje y ordena por fecha (lo que no tiene fecha, al final).
+            var byTrip = {};
+            docs.forEach(function (d) { (byTrip[d.tripName] = byTrip[d.tripName] || []).push(d); });
+
+            var container = document.getElementById("groups");
+            Object.keys(byTrip).sort().forEach(function (trip) {
+              var title = document.createElement("h3");
+              title.textContent = trip;
+              container.appendChild(title);
+
+              var list = document.createElement("ul");
+              byTrip[trip]
+                .sort(function (a, b) { return (a.date ? a.date + (a.time || "") : "9999").localeCompare(b.date ? b.date + (b.time || "") : "9999"); })
+                .forEach(function (d) {
+                  var li = document.createElement("li");
+                  var btn = document.createElement("button");
+                  var name = document.createElement("strong");
+                  name.textContent = d.name;
+                  var meta = document.createElement("span");
+                  meta.textContent = [TYPES[d.docType] || "Documento", d.date ? formatDate(d.date) : "", d.time || ""].filter(Boolean).join(" · ");
+                  btn.appendChild(name);
+                  btn.appendChild(meta);
+                  btn.addEventListener("click", function () { open(d); });
+                  li.appendChild(btn);
+                  list.appendChild(li);
+                });
+              container.appendChild(list);
+            });
+            document.getElementById("docs").hidden = false;
+          };
+        };
+      })();
+    </script>
   </body>
 </html>

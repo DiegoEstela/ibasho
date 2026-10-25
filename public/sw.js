@@ -1,7 +1,7 @@
 // Service worker de Ibasho.
 // Cachea solo recursos estáticos y una página sin conexión. No se guarda HTML
 // privado: así no se mezclan datos entre cuentas en un mismo dispositivo.
-const VERSION = "v1";
+const VERSION = "v2";
 const STATIC_CACHE = `ibasho-static-${VERSION}`;
 const OFFLINE_URL = "/offline.html";
 const PRECACHE = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon-512.png", "/icons/logo.svg"];
