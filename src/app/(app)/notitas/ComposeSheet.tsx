@@ -5,6 +5,7 @@ import { BottomSheet } from "@/components/ui/BottomSheet";
 import { NoteCard } from "@/components/notitas/NoteCard";
 import { PAPERS, STICKERS } from "@/lib/notitas/papers";
 import { createClient } from "@/lib/supabase/client";
+import { notifyPartner } from "@/lib/push/client";
 import { MAX_LENGTH, isScheduled, shortTime, whenLabel, type Note, type Person } from "./types";
 
 type Props = {
@@ -74,9 +75,15 @@ function ComposeForm({ note, householdId, meName, partners, today, nowTime, onSa
     const supabase = createClient();
     const { error: saveError } = note
       ? await supabase.from("daily_messages").update(payload).eq("id", note.id)
-      : await supabase.from("daily_messages").insert({ ...payload, household_id: householdId });
+      : await supabase
+          .from("daily_messages")
+          // Las que se dejan ya mismo se avisan desde aquí; las programadas, cuando llega su hora.
+          .insert({ ...payload, household_id: householdId, pushed_at: later ? null : new Date().toISOString() });
     setSaving(false);
     if (saveError) return setError("No se pudo guardar la notita. Revisa tu conexión e inténtalo de nuevo.");
+    if (!note && !later) {
+      notifyPartner({ kind: "notitas", title: "Tienes una notita 💌", body: `${meName || "Tu pareja"} te dejó algo. Ábrela cuando quieras.`, url: "/notitas", to: to === EVERYONE ? null : to, tag: "notita" });
+    }
     onSaved(later ? whenLabel(deliverOn, deliverTime).replace(" · ", " a las ") : null);
   }
 

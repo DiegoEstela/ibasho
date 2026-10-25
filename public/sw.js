@@ -1,7 +1,7 @@
 // Service worker de Ibasho.
 // Cachea solo recursos estáticos y una página sin conexión. No se guarda HTML
 // privado: así no se mezclan datos entre cuentas en un mismo dispositivo.
-const VERSION = "v3";
+const VERSION = "v4";
 const STATIC_CACHE = `ibasho-static-${VERSION}`;
 const OFFLINE_URL = "/offline.html";
 const PRECACHE = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon-512.png", "/icons/logo.svg"];
@@ -55,4 +55,35 @@ self.addEventListener("fetch", (event) => {
       ),
     );
   }
+});
+
+// ---- Avisos al teléfono ----
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    // Aviso sin formato: se muestra uno genérico.
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || "Ibasho", {
+      body: data.body || "",
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      tag: data.tag || "ibasho",
+      data: { url: data.url || "/inicio" },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || "/inicio", self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      const open = windows.find((w) => new URL(w.url).origin === self.location.origin);
+      if (open) return open.focus().then(() => open.navigate(target).catch(() => {}));
+      return self.clients.openWindow(target);
+    }),
+  );
 });

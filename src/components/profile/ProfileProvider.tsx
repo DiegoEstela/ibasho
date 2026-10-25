@@ -1,9 +1,11 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { createClient } from "@/lib/supabase/client";
+import { PushSettings } from "./PushSettings";
 
 /** Colores que se pueden elegir para identificarte en gastos, tareas y notitas. */
 export const PROFILE_COLORS = ["#6f8f5e", "#c9704f", "#8fbfd4", "#f2b8c6", "#c8382f", "#a889c9", "#d9a441"];
@@ -160,6 +162,14 @@ function ProfileForm({
       <button disabled={saving} className="min-h-12 rounded-2xl bg-forest px-8 text-base font-medium text-surface shadow-sm transition active:scale-95 disabled:opacity-60">
         {saving ? "Guardando…" : "Guardar"}
       </button>
+
+      {!askingName && <PushSettings />}
+
+      {!askingName && (
+        <Link href="/restablecer" className="flex min-h-11 items-center justify-center text-sm font-medium text-forest">
+          Crear o cambiar mi contraseña
+        </Link>
+      )}
     </form>
   );
 }

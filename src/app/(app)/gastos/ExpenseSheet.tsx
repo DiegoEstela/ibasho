@@ -6,7 +6,9 @@ import { Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { CatIcon } from "@/components/ui/CatIcon";
 import { colorFor } from "@/lib/compras/icons";
+import { useProfile } from "@/components/profile/ProfileProvider";
 import { createClient } from "@/lib/supabase/client";
+import { notifyPartner } from "@/lib/push/client";
 import { cardLabel } from "@/lib/tarjetas/labels";
 import type { Participant } from "@/lib/gastos/balance";
 import { EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
@@ -57,6 +59,7 @@ export function ExpenseSheet(props: Props) {
 }
 
 function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits, onSaved, onDelete }: Props) {
+  const profile = useProfile();
   const ids = participants.map((p) => p.id);
 
   // Si el gasto ya existe, deduce cómo se repartió para mostrarlo igual.
@@ -193,6 +196,9 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
     });
     setSaving(false);
     if (rpcError) return setError("No se pudo guardar el gasto. Revisa tu conexión e inténtalo de nuevo.");
+    if (!expense && !trip) {
+      notifyPartner({ kind: "gastos", title: "Gasto nuevo", body: `${profile.name || "Tu pareja"} anotó «${description.trim()}» · ${formatEUR(toCents(amount))}`, url: "/gastos" });
+    }
     onSaved();
   }
 

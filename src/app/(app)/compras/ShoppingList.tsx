@@ -8,7 +8,9 @@ import { SwipeRow } from "@/components/ui/SwipeRow";
 import { CATEGORIES, DEFAULT_CATEGORY_STYLE, classify, type Category } from "@/lib/compras/categories";
 import { colorFor, iconFor } from "@/lib/compras/icons";
 import { formatQuantity, parseIngredient } from "@/lib/cocina/parse";
+import { useProfile } from "@/components/profile/ProfileProvider";
 import { createClient } from "@/lib/supabase/client";
+import { notifyPartner } from "@/lib/push/client";
 import { timeAgo } from "@/lib/utils/time";
 import { CategorySheet } from "./CategorySheet";
 import { CategoryTiles } from "./CategoryTiles";
@@ -83,6 +85,7 @@ const field =
   "min-h-11 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest";
 
 export function ShoppingList({ householdId, userId, initialItems, initialProducts, initialCategories, members }: Props) {
+  const profile = useProfile();
   const [supabase] = useState(() => createClient());
   const [now] = useState(() => Date.now());
   const [items, setItems] = useState<Item[]>(initialItems);
@@ -257,6 +260,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     setItems((prev) =>
       prev.some((i) => i.id === data.id) ? prev.filter((i) => i.id !== tempId) : prev.map((i) => (i.id === tempId ? (data as Item) : i)),
     );
+    notifyPartner({ kind: "compras", title: "Lista de compras", body: `${profile.name || "Tu pareja"} agregó «${name}»`, url: "/compras" });
   }
 
   async function toggle(item: Item) {

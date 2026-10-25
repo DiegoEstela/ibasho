@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-type Mode = "login" | "signup" | "magic";
+type Mode = "login" | "signup" | "magic" | "reset";
 
 const inputClass =
   "min-h-12 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest";
@@ -58,6 +58,16 @@ export function LoginForm() {
         return;
       }
 
+      if (mode === "reset") {
+        // El enlace del correo lleva a una pantalla donde eliges la contraseña nueva.
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/restablecer")}`,
+        });
+        if (error) throw error;
+        setMessage({ type: "ok", text: "Listo. Si ese correo tiene cuenta, te enviamos un enlace para elegir una contraseña nueva." });
+        return;
+      }
+
       if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email,
@@ -96,7 +106,14 @@ export function LoginForm() {
 
   return (
     <form onSubmit={onSubmit} className="flex w-full flex-col gap-4">
-      {mode === "magic" ? (
+      {mode === "reset" ? (
+        <div>
+          <h1 className="font-display text-xl font-bold">Restablecer la contraseña</h1>
+          <p className="mt-1 text-sm text-ink-soft">
+            Escribe tu correo y te enviamos un enlace para elegir una contraseña nueva. También sirve si creaste la cuenta con un enlace y nunca tuviste contraseña.
+          </p>
+        </div>
+      ) : mode === "magic" ? (
         <div>
           <h1 className="font-display text-xl font-bold">Entrar con un enlace</h1>
           <p className="mt-1 text-sm text-ink-soft">
@@ -132,7 +149,7 @@ export function LoginForm() {
         required
       />
 
-      {mode !== "magic" && (
+      {(mode === "login" || mode === "signup") && (
         <input
           className={inputClass}
           type="password"
@@ -165,17 +182,25 @@ export function LoginForm() {
           ? "Un momento…"
           : mode === "magic"
             ? "Enviarme el enlace"
+            : mode === "reset"
+              ? "Enviarme el enlace"
             : mode === "signup"
               ? "Crear cuenta"
               : "Entrar"}
       </button>
 
+      {mode === "login" && (
+        <button type="button" onClick={() => switchMode("reset")} className="-mb-1 min-h-11 text-sm font-medium text-forest underline-offset-4 hover:underline">
+          ¿Olvidaste tu contraseña?
+        </button>
+      )}
+
       <button
         type="button"
-        onClick={() => switchMode(mode === "magic" ? "login" : "magic")}
+        onClick={() => switchMode(mode === "magic" || mode === "reset" ? "login" : "magic")}
         className="min-h-11 text-sm text-ink-soft underline-offset-4 hover:underline"
       >
-        {mode === "magic" ? "Prefiero usar contraseña" : "Prefiero entrar con un enlace por email"}
+        {mode === "magic" || mode === "reset" ? "Volver a iniciar sesión" : "Prefiero entrar con un enlace por email"}
       </button>
     </form>
   );
