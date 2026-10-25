@@ -1,26 +1,81 @@
 @import "tailwindcss";
 
+/* Paleta Ibasho: acuarela cálida inspirada en la naturaleza japonesa (original). */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --washi: #f7f0e1;
+  --washi-deep: #efe5cf;
+  --surface: #fffaf0;
+  --ink: #3a3328;
+  --ink-soft: #7a6f5d;
+  --moss: #6f8f5e;
+  --forest: #3f6b4a;
+  --sky: #8fbfd4;
+  --terracotta: #c9704f;
+  --sakura: #f2b8c6;
+  --hanko: #c8382f;
+  --line: rgba(58, 51, 40, 0.12);
+
+  --background: var(--washi);
+  --foreground: var(--ink);
+}
+
+/* Modo oscuro: "noche de verano" */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --washi: #11192b;
+    --washi-deep: #0c1322;
+    --surface: #1a2540;
+    --ink: #f3e9d2;
+    --ink-soft: #a9b0c4;
+    --moss: #8fb07a;
+    --forest: #7fb58c;
+    --sky: #7aa6d6;
+    --terracotta: #e59a6f;
+    --sakura: #e8a6bb;
+    --hanko: #e0554a;
+    --line: rgba(243, 233, 210, 0.14);
+  }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-washi: var(--washi);
+  --color-washi-deep: var(--washi-deep);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-moss: var(--moss);
+  --color-forest: var(--forest);
+  --color-sky: var(--sky);
+  --color-terracotta: var(--terracotta);
+  --color-sakura: var(--sakura);
+  --color-hanko: var(--hanko);
+  --color-line: var(--line);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  --font-display: var(--font-zen-maru), var(--font-sans);
 }
 
 body {
-  background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  /* Textura suave de papel washi en lugar de un fondo plano */
+  background-color: var(--background);
+  background-image:
+    radial-gradient(circle at 20% 10%, rgba(255, 255, 255, 0.35), transparent 40%),
+    radial-gradient(circle at 80% 90%, rgba(111, 143, 94, 0.08), transparent 45%);
+  background-attachment: fixed;
+}
+
+@keyframes drift {
+  from { transform: translateX(-12%); }
+  to { transform: translateX(12%); }
+}
+
+.cloud {
+  animation: drift 28s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud { animation: none; }
 }
