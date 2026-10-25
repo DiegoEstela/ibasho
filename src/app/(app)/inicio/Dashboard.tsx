@@ -13,6 +13,9 @@ import { formatRange, tripPhase } from "@/lib/viajes/dates";
 import { MIN_SLOTS, WIDGETS, type WidgetDef, type WidgetId } from "./catalog";
 
 export type Stats = {
+  wishlist: { count: number; top: string | null };
+  notas: { count: number; latest: string | null };
+  tareas: { overdue: number; today: number; first: string | null };
   viajes: { id: string; name: string; emoji: string | null; start_date: string | null; end_date: string | null }[];
   mensajes: { hasPartner: boolean; unread: number; latest: { body: string; from: string } | null };
   tarjeta: { hasData: boolean; pendingCents: number; nextDue: string | null; nextCents: number };
@@ -386,6 +389,46 @@ function WidgetBody({ def, stats, today }: { def: WidgetDef; stats: Stats; today
             ? `${stats.favoritesCount} ${stats.favoritesCount === 1 ? "favorita" : "favoritas"}`
             : `Última: ${stats.lastRecipe}`}
         </p>
+      </>
+    );
+  }
+
+  if (def.id === "wishlist") {
+    const w = stats.wishlist;
+    if (w.count === 0) return <p className="mt-auto text-sm text-ink-soft">Anoten lo que sueñan tener.</p>;
+    return (
+      <>
+        <p className="font-display text-3xl font-bold leading-none lg:text-4xl">{w.count}</p>
+        <p className="mt-1 text-sm text-ink-soft">{w.count === 1 ? "deseo pendiente" : "deseos pendientes"}</p>
+        {w.top && <p className="mt-auto truncate pt-3 text-sm text-ink-soft">♥ {w.top}</p>}
+      </>
+    );
+  }
+
+  if (def.id === "notas") {
+    const n = stats.notas;
+    if (n.count === 0) return <p className="mt-auto text-sm text-ink-soft">Guarden medidas y datos útiles de la casa.</p>;
+    return (
+      <>
+        <p className="font-display text-3xl font-bold leading-none lg:text-4xl">{n.count}</p>
+        <p className="mt-1 text-sm text-ink-soft">{n.count === 1 ? "nota guardada" : "notas guardadas"}</p>
+        {n.latest && <p className="mt-auto truncate pt-3 text-sm text-ink-soft">{n.latest}</p>}
+      </>
+    );
+  }
+
+  if (def.id === "tareas") {
+    const t = stats.tareas;
+    const pending = t.overdue + t.today;
+    if (pending === 0) return <p className="mt-auto font-display text-lg font-bold">Todo hecho por hoy 🌿</p>;
+    return (
+      <>
+        <p className="font-display text-3xl font-bold leading-none lg:text-4xl">{pending}</p>
+        <p className="mt-1 text-sm text-ink-soft">
+          {pending === 1 ? "tarea para hoy" : "tareas para hoy"}
+          {t.overdue > 0 && <span className="text-hanko"> · {t.overdue} {t.overdue === 1 ? "atrasada" : "atrasadas"}</span>}
+        </p>
+        {t.first && <p className="mt-auto truncate pt-3 text-sm text-ink-soft">{t.first}</p>}
       </>
     );
   }

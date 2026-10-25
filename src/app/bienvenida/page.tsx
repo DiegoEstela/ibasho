@@ -59,9 +59,9 @@ const slides = [
       <InfoSlide
         icon={ListChecks}
         tone="forest"
-        badge="Próximamente"
+        badge="Disponible"
         title="La casa en orden"
-        text="Tareas con recordatorios, notas con medidas y datos útiles, y una wishlist de todo lo que sueñan tener."
+        text="Tareas que se repiten y se reparten, notas con medidas y datos útiles, y una wishlist de todo lo que sueñan tener."
       />
     ),
   },

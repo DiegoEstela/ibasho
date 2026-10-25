@@ -19,9 +19,9 @@ export const navModules: NavItem[] = [
   { href: "/gastos", label: "Gastos", icon: Wallet, available: true },
   { href: "/notitas", label: "Notitas", icon: Mail, available: true },
   { href: "/viajes", label: "Viajes", icon: MapPin, available: true },
-  { href: "/wishlist", label: "Wishlist", icon: Gift, available: false },
-  { href: "/notas", label: "Notas", icon: StickyNote, available: false },
-  { href: "/tareas", label: "Tareas", icon: ListChecks, available: false },
+  { href: "/wishlist", label: "Wishlist", icon: Gift, available: true },
+  { href: "/notas", label: "Notas", icon: StickyNote, available: true },
+  { href: "/tareas", label: "Tareas", icon: ListChecks, available: true },
 ];
 
 /** Lo que va siempre a la vista en la barra inferior del teléfono. */

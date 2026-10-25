@@ -13,8 +13,9 @@ async function Resumen() {
   const supabase = await createClient();
   const { data: claims } = await supabase.auth.getClaims();
   const userId = claims?.claims?.sub ?? "";
+  const todayMadrid = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date());
 
-  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements, cInstallments, cShares, nNotes, nReads, vTrips] =
+  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements, cInstallments, cShares, nNotes, nReads, vTrips, wItems, hNotes, tTasks] =
     await Promise.all([
       requireHousehold(),
       supabase.from("shopping_items").select("name").eq("done", false).order("created_at", { ascending: false }).limit(200),
@@ -39,6 +40,9 @@ async function Resumen() {
       supabase.from("daily_messages").select("id, from_user, body, deliver_on, created_at").neq("from_user", userId).order("deliver_on", { ascending: false }).order("created_at", { ascending: false }).limit(30),
       supabase.from("daily_message_reads").select("message_id").eq("user_id", userId),
       supabase.from("trips").select("id, name, emoji, start_date, end_date").order("start_date", { ascending: true, nullsFirst: false }).limit(50),
+      supabase.from("wishlist_items").select("title, priority, created_at").eq("status", "deseado").order("priority").order("created_at", { ascending: false }).limit(100),
+      supabase.from("notes").select("title, pinned, updated_at").order("pinned", { ascending: false }).order("updated_at", { ascending: false }).limit(100),
+      supabase.from("tasks").select("title, due_date, assigned_to, remind_time").eq("active", true).lte("due_date", todayMadrid).order("due_date").limit(100),
     ]);
 
   // Si la migración 0004 aún no se ejecutó, la columna no existe y se usan los widgets por defecto.
@@ -69,7 +73,7 @@ async function Resumen() {
           : { state: "even", cents: 0, name: null };
 
   // Tarjetas: lo que me queda por pagar y el próximo pago (si la migración 0006 no está, queda en "sin tarjetas").
-  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date());
+  const today = todayMadrid;
   const sharesOf = new Map<string, Record<string, number>>();
   for (const s of (cShares.data ?? []) as { purchase_id: string; user_id: string; percent: number }[]) {
     sharesOf.set(s.purchase_id, { ...(sharesOf.get(s.purchase_id) ?? {}), [s.user_id]: Number(s.percent) });
@@ -105,7 +109,22 @@ async function Resumen() {
   // Viajes: el cliente elige cuál mostrar según la fecha de hoy (si la migración 0010 no está, la lista queda vacía).
   const viajes = ((vTrips.data ?? []) as { id: string; name: string; emoji: string | null; start_date: string | null; end_date: string | null }[]);
 
+  // Wishlist, notas y tareas (si sus migraciones no están, las listas llegan vacías y el widget lo dice).
+  const wishlist: Stats["wishlist"] = { count: wItems.data?.length ?? 0, top: (wItems.data?.[0]?.title as string | undefined) ?? null };
+  const notas: Stats["notas"] = { count: hNotes.data?.length ?? 0, latest: (hNotes.data?.[0]?.title as string | undefined) ?? null };
+  const myTasks = ((tTasks.data ?? []) as { title: string; due_date: string; assigned_to: string | null }[]).filter(
+    (t) => t.assigned_to === null || t.assigned_to === userId,
+  );
+  const tareas: Stats["tareas"] = {
+    overdue: myTasks.filter((t) => t.due_date < today).length,
+    today: myTasks.filter((t) => t.due_date === today).length,
+    first: myTasks[0]?.title ?? null,
+  };
+
   const stats: Stats = {
+    wishlist,
+    notas,
+    tareas,
     viajes,
     mensajes,
     tarjeta,
