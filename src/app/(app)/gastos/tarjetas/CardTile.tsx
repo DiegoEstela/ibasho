@@ -9,7 +9,9 @@ const LIGHT_COLORS = ["sakura", "sky"];
 
 type Props = {
   card: Card;
-  pendingCents: number;
+  /** Crédito: lo que queda por pagar. Débito: el dinero que tiene. */
+  amountCents: number;
+  /** Solo crédito: próxima fecha de pago. */
   nextDue: string | null;
   selected: boolean;
   onSelect: () => void;
@@ -17,7 +19,8 @@ type Props = {
 };
 
 /** Tarjeta de crédito dibujada: color, chip, últimos dígitos, lo que queda por pagar y el próximo pago. */
-export function CardTile({ card, pendingCents, nextDue, selected, onSelect, onEdit }: Props) {
+export function CardTile({ card, amountCents, nextDue, selected, onSelect, onEdit }: Props) {
+  const debit = card.kind === "debit";
   const base = colorFor(card.color);
   const text = LIGHT_COLORS.includes(card.color) ? "#2b2620" : "#fffaf0";
 
@@ -36,7 +39,13 @@ export function CardTile({ card, pendingCents, nextDue, selected, onSelect, onEd
         }}
       >
         <span className="flex items-start justify-between gap-2">
-          <span className="min-w-0 truncate font-display text-base font-bold">{card.name}</span>
+          <span className="min-w-0">
+            <span className="block truncate font-display text-base font-bold">{card.name}</span>
+            <span className="block text-[10px] uppercase tracking-wider opacity-75">
+              {debit ? "Débito" : "Crédito"}
+              {card.owner_user_id === null && " · Compartida"}
+            </span>
+          </span>
           <Wifi size={18} className="shrink-0 rotate-90 opacity-80" />
         </span>
 
@@ -47,11 +56,11 @@ export function CardTile({ card, pendingCents, nextDue, selected, onSelect, onEd
 
         <span className="flex items-end justify-between gap-2">
           <span>
-            <span className="block text-[10px] uppercase tracking-wider opacity-75">Por pagar</span>
-            <span className="block font-display text-lg font-bold leading-tight lg:text-xl">{formatEUR(pendingCents)}</span>
+            <span className="block text-[10px] uppercase tracking-wider opacity-75">{debit ? "Saldo" : "Por pagar"}</span>
+            <span className="block font-display text-lg font-bold leading-tight lg:text-xl">{formatEUR(amountCents)}</span>
           </span>
           <span className="text-right text-[11px] leading-tight opacity-90">
-            {nextDue ? (
+            {debit ? null : nextDue ? (
               <>
                 Próximo pago
                 <span className="block font-medium">{formatDate(nextDue).slice(0, 5)}</span>

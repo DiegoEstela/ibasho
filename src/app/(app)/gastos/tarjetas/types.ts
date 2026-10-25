@@ -3,11 +3,17 @@ export type Card = {
   name: string;
   last4: string | null;
   color: string;
+  kind: "credit" | "debit";
+  /** Titular; nulo = tarjeta compartida entre las personas del hogar. */
   owner_user_id: string | null;
   closing_day: number | null;
-  due_day: number;
+  /** Solo las de crédito tienen día de pago. */
+  due_day: number | null;
+  initial_balance: number;
   archived: boolean;
 };
+
+export type { DepositRow as CardDeposit, CardExpenseRow } from "@/lib/tarjetas/debit";
 
 export type Purchase = {
   id: string;

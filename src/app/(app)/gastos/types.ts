@@ -5,7 +5,10 @@ export type Expense = {
   amount: number;
   expense_date: string;
   category: string;
-  paid_by: string;
+  /** Nulo si se pagó desde una tarjeta compartida. */
+  paid_by: string | null;
+  card_id: string | null;
+  notes: string | null;
   created_at: string;
 };
 

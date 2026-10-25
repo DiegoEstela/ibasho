@@ -1,5 +1,6 @@
 export type Participant = { id: string; user_id: string | null; name: string; color: string };
-export type ExpenseRow = { id: string; paid_by: string; amount: number };
+// paid_by nulo = pagado desde una tarjeta compartida: no genera deudas entre las personas.
+export type ExpenseRow = { id: string; paid_by: string | null; amount: number };
 export type SplitRow = { expense_id: string; participant_id: string; amount: number };
 export type SettlementRow = { from_participant: string; to_participant: string; amount: number };
 export type Transfer = { from: string; to: string; cents: number };
@@ -18,8 +19,10 @@ export function netBalances(
     net[id] = (net[id] ?? 0) + value;
   };
 
-  const paidBy = new Map(expenses.map((e) => [e.id, e.paid_by]));
-  for (const e of expenses) add(e.paid_by, cents(e.amount));
+  // Solo cuentan los gastos con pagador: los de una tarjeta compartida no crean deudas.
+  const withPayer = expenses.filter((e): e is ExpenseRow & { paid_by: string } => e.paid_by !== null);
+  const paidBy = new Map(withPayer.map((e) => [e.id, e.paid_by]));
+  for (const e of withPayer) add(e.paid_by, cents(e.amount));
   for (const s of splits) if (paidBy.has(s.expense_id)) add(s.participant_id, -cents(s.amount));
 
   // Quien paga una deuda mejora su saldo; quien la recibe lo reduce.

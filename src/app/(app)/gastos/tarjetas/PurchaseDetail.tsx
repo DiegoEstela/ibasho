@@ -17,13 +17,11 @@ type Props = {
   installments: Installment[];
   today: string;
   canSend: boolean;
-  sending: boolean;
-  sendMessage: string;
   onClose: () => void;
   onToggle: (installment: Installment, paid: boolean) => void;
   onAuto: (installment: Installment) => void;
   onDelete: (purchase: Purchase) => void;
-  onSend: (purchase: Purchase) => void;
+  onRequestSend: (purchase: Purchase) => void;
 };
 
 export function PurchaseDetail(props: Props) {
@@ -43,12 +41,10 @@ function Detail({
   installments,
   today,
   canSend,
-  sending,
-  sendMessage,
   onToggle,
   onAuto,
   onDelete,
-  onSend,
+  onRequestSend,
 }: Props & { purchase: Purchase }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const sorted = [...installments].sort((a, b) => a.number - b.number);
@@ -150,18 +146,13 @@ function Detail({
       ) : (
         canSend && (
           <button
-            onClick={() => onSend(purchase)}
-            disabled={sending}
-            className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-line bg-surface px-4 text-sm font-medium text-forest transition active:scale-95 disabled:opacity-60"
+            onClick={() => onRequestSend(purchase)}
+            className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-line bg-surface px-4 text-sm font-medium text-forest transition active:scale-95"
           >
-            <Receipt size={16} /> {sending ? "Enviando…" : "Enviar a Gastos compartidos"}
+            <Receipt size={16} /> Agregar a Gastos compartidos
           </button>
         )
       )}
-      {sendMessage && (
-        <p role="status" className="rounded-xl bg-hanko/10 px-3 py-2.5 text-sm text-hanko">{sendMessage}</p>
-      )}
-
       {confirmDelete ? (
         <button onClick={() => onDelete(purchase)} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-hanko/10 px-3 text-sm font-medium text-hanko">
           <Trash2 size={16} /> Sí, eliminar la compra y sus cuotas

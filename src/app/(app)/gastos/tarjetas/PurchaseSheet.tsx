@@ -69,7 +69,7 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
       interestPercent: interest,
       count,
       closingDay: card.closing_day,
-      dueDay: card.due_day,
+      dueDay: card.due_day ?? 1,
     });
     return { rows, total: financedCents(toCents(amount), interest) };
   }, [card, amount, interest, interestOk, date, count]);

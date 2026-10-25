@@ -1,21 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CreditCard, Plus } from "lucide-react";
+import Link from "next/link";
+import { Check, CreditCard, Plus, Receipt } from "lucide-react";
 import { GastosTabs } from "@/components/ui/GastosTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { colorFor } from "@/lib/compras/icons";
 import { formatEUR, toCents } from "@/lib/gastos/money";
 import { createClient } from "@/lib/supabase/client";
+import { debitBalanceCents, type CardExpenseRow, type DepositRow } from "@/lib/tarjetas/debit";
 import { isInstallmentPaid, projectByMonth, type InstallmentRow } from "@/lib/tarjetas/installments";
 import { personCents, purchaseStats, type PurchaseStats } from "@/lib/tarjetas/summary";
 import { formatDate } from "../types";
+import { DepositDetailSheet } from "../DepositDetailSheet";
+import { DepositSheet } from "../DepositSheet";
 import { sendPurchaseToExpenses } from "./actions";
 import { CardSheet } from "./CardSheet";
+import { DebitPanel } from "./DebitPanel";
 import { AddCardTile, CardTile } from "./CardTile";
 import { ProjectionChart } from "./ProjectionChart";
 import { PurchaseDetail } from "./PurchaseDetail";
 import { PurchaseSheet } from "./PurchaseSheet";
+import { SendToExpensesSheet } from "./SendToExpensesSheet";
 import type { Card, Installment, Person, Purchase, Share } from "./types";
 
 type Props = {
@@ -26,6 +32,11 @@ type Props = {
   initialPurchases: Purchase[];
   initialShares: Share[];
   initialInstallments: Installment[];
+  initialDeposits: DepositRow[];
+  /** Gastos pagados con alguna tarjeta (para descontar del saldo de las de débito). */
+  initialCardExpenses: CardExpenseRow[];
+  /** Nombre de cada participante de gastos por su id, para mostrar quién pagó. */
+  participantNames: Record<string, string>;
 };
 
 const todayISO = () => {
@@ -48,6 +59,9 @@ export function CardsView({
   initialPurchases,
   initialShares,
   initialInstallments,
+  initialDeposits,
+  initialCardExpenses,
+  participantNames,
 }: Props) {
   const [supabase] = useState(() => createClient());
   const [today] = useState(todayISO);
@@ -57,6 +71,10 @@ export function CardsView({
   const [purchases, setPurchases] = useState(initialPurchases);
   const [shares, setShares] = useState(initialShares);
   const [installments, setInstallments] = useState(initialInstallments);
+  const [deposits, setDeposits] = useState(initialDeposits);
+  const [cardExpenses, setCardExpenses] = useState(initialCardExpenses);
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [depositDetailId, setDepositDetailId] = useState<string | null>(null);
 
   const [cardFilter, setCardFilter] = useState<string | null>(null);
   const [person, setPerson] = useState("");
@@ -67,18 +85,25 @@ export function CardsView({
   const [detailId, setDetailId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendMessage, setSendMessage] = useState("");
+  const [sendId, setSendId] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
+  const noticeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const me = people.find((p) => p.id === userId);
   const nameOf = useCallback((id: string) => (id === userId ? "Tú" : (people.find((p) => p.id === id)?.name ?? "Alguien")), [people, userId]);
 
   // ---------- Sincronización ----------
   const refetch = useCallback(async () => {
-    const [c, p, s, i] = await Promise.all([
+    const [c, p, s, i, d, x] = await Promise.all([
       supabase.from("cards").select("*").eq("archived", false).order("created_at"),
       supabase.from("card_purchases").select("*").order("purchase_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
       supabase.from("card_purchase_shares").select("purchase_id, user_id, percent").limit(5000),
       supabase.from("card_installments").select("id, purchase_id, number, due_date, amount, manual_paid").limit(20000),
+      supabase.from("card_deposits").select("*").order("deposit_date", { ascending: false }).limit(2000),
+      supabase.from("expenses").select("id, card_id, description, amount, expense_date, paid_by, created_at").not("card_id", "is", null).limit(5000),
     ]);
+    if (d.data) setDeposits(d.data as DepositRow[]);
+    if (x.data) setCardExpenses(x.data as CardExpenseRow[]);
     if (c.data) setCards(c.data as Card[]);
     if (p.data) setPurchases(p.data as Purchase[]);
     if (s.data) setShares(s.data as Share[]);
@@ -97,6 +122,8 @@ export function CardsView({
       .on("postgres_changes", { event: "*", schema: "public", table: "cards", filter }, queue)
       .on("postgres_changes", { event: "*", schema: "public", table: "card_purchases", filter }, queue)
       .on("postgres_changes", { event: "*", schema: "public", table: "card_installments", filter }, queue)
+      .on("postgres_changes", { event: "*", schema: "public", table: "card_deposits", filter }, queue)
+      .on("postgres_changes", { event: "*", schema: "public", table: "expenses", filter }, queue)
       .subscribe();
     const onVisible = () => document.visibilityState === "visible" && refetch();
     document.addEventListener("visibilitychange", onVisible);
@@ -165,6 +192,20 @@ export function CardsView({
     return map;
   }, [purchases, statsByPurchase]);
 
+  const selectedCard = cards.find((c) => c.id === cardFilter) ?? null;
+  const debitView = selectedCard?.kind === "debit";
+  const creditCards = cards.filter((c) => c.kind === "credit");
+
+  /** Lo que muestra cada tarjeta dibujada: el saldo (débito) o lo que queda por pagar (crédito). */
+  const amountOfCard = (card: Card) =>
+    card.kind === "debit"
+      ? debitBalanceCents(
+          card.initial_balance,
+          deposits.filter((d) => d.card_id === card.id),
+          cardExpenses.filter((e) => e.card_id === card.id),
+        )
+      : (pendingByCard.get(card.id) ?? 0);
+
   const totalPending = visiblePurchases.reduce((s, p) => s + pendingOf(p.id, person), 0);
   const activePurchases = visiblePurchases.filter((p) => (statsByPurchase.get(p.id)?.remaining ?? 0) > 0).length;
 
@@ -223,13 +264,24 @@ export function CardsView({
     if (error) refetch();
   }
 
-  async function sendToExpenses(purchase: Purchase) {
+  function requestSend(purchase: Purchase) {
+    setSendMessage("");
+    setSendId(purchase.id);
+  }
+
+  async function confirmSend(category: string) {
+    if (!sendId) return;
     setSending(true);
     setSendMessage("");
-    const result = await sendPurchaseToExpenses(purchase.id);
+    const result = await sendPurchaseToExpenses(sendId, category);
     setSending(false);
     if (!result.ok) return setSendMessage(result.message);
+    setSendId(null);
+    setDetailId(null);
     refetch();
+    clearTimeout(noticeTimer.current);
+    setNotice("Listo: la compra ya está en Gastos compartidos.");
+    noticeTimer.current = setTimeout(() => setNotice(""), 5000);
   }
 
   const onCardSaved = () => {
@@ -251,10 +303,10 @@ export function CardsView({
         subtitle="Tarjetas y cuotas"
         actions={
           <button
-            onClick={() => (cards.length ? setPurchaseOpen(true) : setCardSheet({ open: true, card: null }))}
+            onClick={() => (creditCards.length ? setPurchaseOpen(true) : setCardSheet({ open: true, card: null }))}
             className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-forest px-3.5 text-sm font-medium text-surface shadow-sm transition active:scale-95 lg:min-h-11 lg:rounded-2xl lg:px-5"
           >
-            <Plus size={16} /> {cards.length ? "Compra" : "Tarjeta"}
+            <Plus size={16} /> {creditCards.length ? "Compra" : "Tarjeta"}
           </button>
         }
       />
@@ -286,8 +338,8 @@ export function CardsView({
               <CardTile
                 key={card.id}
                 card={card}
-                pendingCents={pendingByCard.get(card.id) ?? 0}
-                nextDue={nextDueByCard.get(card.id) ?? null}
+                amountCents={amountOfCard(card)}
+                nextDue={card.kind === "credit" ? (nextDueByCard.get(card.id) ?? null) : null}
                 selected={cardFilter === card.id}
                 onSelect={() => setCardFilter(cardFilter === card.id ? null : card.id)}
                 onEdit={() => setCardSheet({ open: true, card })}
@@ -296,7 +348,7 @@ export function CardsView({
             <AddCardTile onClick={() => setCardSheet({ open: true, card: null })} />
           </div>
 
-          {people.length > 1 && (
+          {people.length > 1 && !debitView && (
             <div className="mb-3 flex items-center gap-2 overflow-x-auto" role="group" aria-label="Ver la parte de">
               <span className="shrink-0 text-xs text-ink-soft">Ver:</span>
               {[{ id: "", label: "Todo" }, ...(me ? [{ id: me.id, label: "Mi parte" }] : []), ...people.filter((p) => p.id !== userId).map((p) => ({ id: p.id, label: p.name }))].map(
@@ -316,6 +368,20 @@ export function CardsView({
             </div>
           )}
 
+          {debitView && selectedCard ? (
+            <div className="max-w-3xl">
+              <DebitPanel
+                card={selectedCard}
+                deposits={deposits.filter((d) => d.card_id === selectedCard.id)}
+                expenses={cardExpenses.filter((e) => e.card_id === selectedCard.id)}
+                people={people}
+                userId={userId}
+                participantNames={participantNames}
+                onDeposit={() => setDepositOpen(true)}
+                onOpenDeposit={setDepositDetailId}
+              />
+            </div>
+          ) : (
           <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:grid-rows-[auto_1fr] lg:gap-x-10">
             {/* Resumen */}
             <div className="rounded-2xl border border-line bg-surface p-4 lg:col-start-2 lg:row-start-1 lg:p-5">
@@ -400,7 +466,7 @@ export function CardsView({
                     const mine = person ? pendingOf(p.id, person) : null;
                     return (
                       <li key={p.id}>
-                        <button onClick={() => { setSendMessage(""); setDetailId(p.id); }} className="block w-full px-3 py-2.5 text-left">
+                        <button onClick={() => setDetailId(p.id)} className="block w-full px-3 py-2.5 text-left">
                           <span className="flex items-center gap-3">
                             <span
                               className="flex size-9 shrink-0 items-center justify-center rounded-xl"
@@ -433,6 +499,24 @@ export function CardsView({
                             </span>
                           </span>
                         </button>
+
+                        {/* Acción visible: llevar la compra a Gastos compartidos */}
+                        {people.length > 1 && (
+                          <div className="flex justify-end px-3 pb-2.5 -mt-0.5">
+                            {p.expense_id ? (
+                              <span className="flex items-center gap-1.5 text-[11px] text-forest">
+                                <Check size={13} /> En Gastos compartidos
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => requestSend(p)}
+                                className="flex min-h-8 items-center gap-1.5 rounded-lg bg-forest/10 px-3 text-xs font-medium text-forest transition active:scale-95"
+                              >
+                                <Receipt size={13} /> Agregar a gastos
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </li>
                     );
                   })}
@@ -440,6 +524,7 @@ export function CardsView({
               )}
             </div>
           </div>
+          )}
         </>
       )}
 
@@ -450,18 +535,45 @@ export function CardsView({
         people={people}
         meId={userId}
         householdId={householdId}
-        purchasesCount={cardSheet.card ? purchasesOfCard(cardSheet.card.id) : 0}
+        linkedCount={cardSheet.card ? (cardSheet.card.kind === "debit" ? deposits.filter((d) => d.card_id === cardSheet.card!.id).length : purchasesOfCard(cardSheet.card.id)) : 0}
         onSaved={onCardSaved}
       />
 
       <PurchaseSheet
         open={purchaseOpen}
         onClose={() => setPurchaseOpen(false)}
-        cards={cards}
+        cards={creditCards}
         defaultCardId={cardFilter}
         people={people}
         meId={userId}
         onSaved={onPurchaseSaved}
+      />
+
+      <DepositDetailSheet
+        deposit={deposits.find((d) => d.id === depositDetailId) ?? null}
+        cardName={cards.find((c) => c.id === deposits.find((d) => d.id === depositDetailId)?.card_id)?.name ?? "una tarjeta"}
+        by={nameOf(deposits.find((d) => d.id === depositDetailId)?.deposited_by ?? "")}
+        onClose={() => setDepositDetailId(null)}
+        onDelete={async (deposit) => {
+          setDepositDetailId(null);
+          setDeposits((prev) => prev.filter((d) => d.id !== deposit.id));
+          const { error } = await supabase.from("card_deposits").delete().eq("id", deposit.id);
+          if (error) refetch();
+        }}
+      />
+
+      <DepositSheet
+        open={depositOpen}
+        onClose={() => setDepositOpen(false)}
+        cards={cards.filter((c) => c.kind === "debit")}
+        defaultCardId={debitView ? cardFilter : null}
+        people={people}
+        meId={userId}
+        householdId={householdId}
+        onSaved={() => {
+          setDepositOpen(false);
+          refetch();
+        }}
       />
 
       <PurchaseDetail
@@ -472,14 +584,34 @@ export function CardsView({
         installments={installments.filter((i) => i.purchase_id === detailId)}
         today={today}
         canSend={detailCanSend}
-        sending={sending}
-        sendMessage={sendMessage}
         onClose={() => setDetailId(null)}
         onToggle={(inst, paid) => setPaid(inst, paid)}
         onAuto={(inst) => setPaid(inst, null)}
         onDelete={removePurchase}
-        onSend={sendToExpenses}
+        onRequestSend={requestSend}
       />
+
+      <SendToExpensesSheet
+        purchase={purchases.find((p) => p.id === sendId) ?? null}
+        card={cards.find((c) => c.id === purchases.find((p) => p.id === sendId)?.card_id)}
+        people={people}
+        shares={shares.filter((s) => s.purchase_id === sendId)}
+        userId={userId}
+        sending={sending}
+        message={sendMessage}
+        onClose={() => setSendId(null)}
+        onConfirm={confirmSend}
+      />
+
+      {notice && (
+        <div
+          role="status"
+          className="fixed inset-x-4 bottom-24 z-40 mx-auto flex max-w-sm items-center justify-between gap-3 rounded-2xl bg-ink px-4 py-3 text-sm text-background shadow-lg lg:bottom-8"
+        >
+          <span>{notice}</span>
+          <Link href="/gastos" className="min-h-9 shrink-0 py-2 font-medium text-sakura">Ver</Link>
+        </div>
+      )}
     </section>
   );
 }

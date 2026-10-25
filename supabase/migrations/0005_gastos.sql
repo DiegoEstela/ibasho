@@ -144,61 +144,7 @@ $$;
 revoke all on function public.ensure_household_expense_group(uuid) from public, anon;
 grant execute on function public.ensure_household_expense_group(uuid) to authenticated;
 
--- Guarda un gasto y su reparto de forma atómica (crear si p_id es nulo, editar si no).
--- Se ejecuta con los permisos de quien llama, así que aplica la seguridad por hogar.
-create or replace function public.save_expense(
-  p_id uuid,
-  p_group uuid,
-  p_description text,
-  p_amount numeric,
-  p_date date,
-  p_category text,
-  p_paid_by uuid,
-  p_splits jsonb
-)
-returns uuid
-language plpgsql
-as $$
-declare
-  hid uuid;
-  eid uuid := p_id;
-  total numeric;
-begin
-  select household_id into hid from public.expense_groups where id = p_group;
-  if hid is null then
-    raise exception 'Grupo no encontrado';
-  end if;
-
-  select coalesce(sum((s ->> 'amount')::numeric), 0) into total
-  from jsonb_array_elements(p_splits) s;
-  if round(total, 2) <> round(p_amount, 2) then
-    raise exception 'Las partes no suman el importe del gasto';
-  end if;
-
-  if eid is null then
-    insert into public.expenses (household_id, group_id, description, amount, expense_date, category, paid_by)
-    values (hid, p_group, trim(p_description), p_amount, p_date, p_category, p_paid_by)
-    returning id into eid;
-  else
-    update public.expenses
-    set description = trim(p_description), amount = p_amount, expense_date = p_date,
-        category = p_category, paid_by = p_paid_by
-    where id = eid and group_id = p_group;
-    if not found then
-      raise exception 'Gasto no encontrado';
-    end if;
-    delete from public.expense_splits where expense_id = eid;
-  end if;
-
-  insert into public.expense_splits (expense_id, participant_id, household_id, amount)
-  select eid, (s ->> 'participant_id')::uuid, hid, (s ->> 'amount')::numeric
-  from jsonb_array_elements(p_splits) s;
-
-  return eid;
-end;
-$$;
-
-grant execute on function public.save_expense(uuid, uuid, text, numeric, date, text, uuid, jsonb) to authenticated;
+-- La función save_expense (guardar un gasto y su reparto de forma atómica) se define en 0007_tarjetas_debito.sql.
 
 -- Tiempo real (solo añade las tablas que aún no estén en la publicación)
 do $$

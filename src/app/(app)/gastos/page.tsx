@@ -7,6 +7,8 @@ import { requireHousehold } from "@/lib/household";
 import { createClient } from "@/lib/supabase/server";
 import { ExpensesView } from "./ExpensesView";
 import { InviteNeeded } from "./InviteNeeded";
+import type { DepositRow } from "@/lib/tarjetas/debit";
+import type { Card } from "./tarjetas/types";
 import type { Expense, Settlement, Split } from "./types";
 
 /** Pantalla de error con el motivo real, para saber qué falló en vez de ver una página vacía. */
@@ -60,16 +62,20 @@ async function Gastos() {
   const participants = { data: synced.participants };
 
   // Segunda ronda: movimientos del grupo.
-  const [expenses, splits, settlements] = await Promise.all([
+  const [expenses, splits, settlements, cards, deposits] = await Promise.all([
     supabase.from("expenses").select("*").eq("group_id", groupId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
     supabase.from("expense_splits").select("expense_id, participant_id, amount, expenses!inner(group_id)").eq("expenses.group_id", groupId).limit(10000),
     supabase.from("settlements").select("*").eq("group_id", groupId).order("settled_on", { ascending: false }).limit(500),
+    supabase.from("cards").select("*").eq("archived", false).order("created_at"),
+    supabase.from("card_deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }).limit(2000),
   ]);
 
   const failed = [
     ["leer los gastos", expenses.error],
     ["leer los repartos", splits.error],
     ["leer los pagos", settlements.error],
+    ["leer las tarjetas (¿ejecutaste la migración 0007?)", cards.error],
+    ["leer los ingresos (¿ejecutaste la migración 0007?)", deposits.error],
   ].find(([, e]) => e) as [string, { code: string; message: string }] | undefined;
   if (failed) return <Unavailable step={failed[0]} detail={`${failed[1].code}: ${failed[1].message}`} />;
 
@@ -92,6 +98,8 @@ async function Gastos() {
         amount,
       }))}
       initialSettlements={(settlements.data ?? []) as Settlement[]}
+      initialCards={(cards.data ?? []) as Card[]}
+      initialDeposits={(deposits.data ?? []) as DepositRow[]}
     />
   );
 }

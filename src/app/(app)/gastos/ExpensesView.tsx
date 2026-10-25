@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Banknote, Download, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { Banknote, CreditCard, Download, PiggyBank, Plus, Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { CatIcon } from "@/components/ui/CatIcon";
 import { GastosTabs } from "@/components/ui/GastosTabs";
@@ -11,6 +12,11 @@ import { createClient } from "@/lib/supabase/client";
 import { netBalances, simplifyDebts, type Participant, type Transfer } from "@/lib/gastos/balance";
 import { expenseCategory, EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
 import { formatEUR, toCents } from "@/lib/gastos/money";
+import { debitBalanceCents, type DepositRow } from "@/lib/tarjetas/debit";
+import { cardLabel } from "@/lib/tarjetas/labels";
+import type { Card } from "./tarjetas/types";
+import { DepositDetailSheet } from "./DepositDetailSheet";
+import { DepositSheet } from "./DepositSheet";
 import { ExpenseSheet } from "./ExpenseSheet";
 import { SettleSheet } from "./SettleSheet";
 import { formatDate, type Expense, type Settlement, type Split } from "./types";
@@ -23,11 +29,17 @@ type Props = {
   initialExpenses: Expense[];
   initialSplits: Split[];
   initialSettlements: Settlement[];
+  initialCards: Card[];
+  initialDeposits: DepositRow[];
 };
 
 type HistoryRow =
   | { kind: "expense"; key: string; date: string; created: string; expense: Expense }
-  | { kind: "settlement"; key: string; date: string; created: string; settlement: Settlement };
+  | { kind: "settlement"; key: string; date: string; created: string; settlement: Settlement }
+  | { kind: "deposit"; key: string; date: string; created: string; deposit: DepositRow };
+
+/** Clave interna para los gastos pagados desde una tarjeta compartida (no tienen una persona que pague). */
+const POOL = "__pool";
 
 const select =
   "min-h-10 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-forest";
@@ -47,6 +59,8 @@ export function ExpensesView({
   initialExpenses,
   initialSplits,
   initialSettlements,
+  initialCards,
+  initialDeposits,
 }: Props) {
   const [supabase] = useState(() => createClient());
   const [currentMonth] = useState(() => {
@@ -57,10 +71,15 @@ export function ExpensesView({
   const [expenses, setExpenses] = useState(initialExpenses);
   const [splits, setSplits] = useState(initialSplits);
   const [settlements, setSettlements] = useState(initialSettlements);
+  const [cards, setCards] = useState(initialCards);
+  const [deposits, setDeposits] = useState(initialDeposits);
 
   const [monthFilter, setMonthFilter] = useState<string>(currentMonth);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [personFilter, setPersonFilter] = useState("");
+  const [cardFilter, setCardFilter] = useState("");
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [depositDetail, setDepositDetail] = useState<DepositRow | null>(null);
 
   const [expenseSheet, setExpenseSheet] = useState<{ open: boolean; expense: Expense | null }>({ open: false, expense: null });
   const [settleSheet, setSettleSheet] = useState<{ open: boolean; suggestion: Transfer | null }>({ open: false, suggestion: null });
@@ -69,17 +88,32 @@ export function ExpensesView({
   const me = participants.find((p) => p.user_id === userId) ?? null;
   const person = useCallback((id: string) => participants.find((p) => p.id === id), [participants]);
   const nameOf = useCallback(
-    (id: string) => (id === me?.id ? "Tú" : (person(id)?.name ?? "Alguien")),
+    (id: string) => (id === POOL ? "Cuenta compartida" : id === me?.id ? "Tú" : (person(id)?.name ?? "Alguien")),
     [me, person],
+  );
+  const cardOf = useCallback((id: string | null) => cards.find((c) => c.id === id), [cards]);
+  /** Quién pagó: una persona o, si salió de una tarjeta compartida, el nombre de la tarjeta. */
+  const payerOf = (e: Expense) => (e.paid_by ? nameOf(e.paid_by) : (cardOf(e.card_id)?.name ?? "Cuenta compartida"));
+  /** Nombre de quien puso un ingreso (viene como id de usuario). */
+  const userName = useCallback(
+    (userId: string | null) => {
+      const p = participants.find((x) => x.user_id === userId);
+      return p ? (p.id === me?.id ? "Tú" : p.name) : "Alguien";
+    },
+    [participants, me],
   );
 
   // ---------- Sincronización ----------
   const refetch = useCallback(async () => {
-    const [e, s, st] = await Promise.all([
+    const [e, s, st, c, d] = await Promise.all([
       supabase.from("expenses").select("*").eq("group_id", groupId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
       supabase.from("expense_splits").select("expense_id, participant_id, amount, expenses!inner(group_id)").eq("expenses.group_id", groupId).limit(10000),
       supabase.from("settlements").select("*").eq("group_id", groupId).order("settled_on", { ascending: false }).limit(500),
+      supabase.from("cards").select("*").eq("archived", false).order("created_at"),
+      supabase.from("card_deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }).limit(2000),
     ]);
+    if (c.data) setCards(c.data as Card[]);
+    if (d.data) setDeposits(d.data as DepositRow[]);
     if (e.data) setExpenses(e.data as Expense[]);
     if (s.data) setSplits((s.data as unknown as Split[]).map(({ expense_id, participant_id, amount }) => ({ expense_id, participant_id, amount })));
     if (st.data) setSettlements(st.data as Settlement[]);
@@ -98,6 +132,8 @@ export function ExpensesView({
       .on("postgres_changes", { event: "*", schema: "public", table: "expenses", filter }, queue)
       .on("postgres_changes", { event: "*", schema: "public", table: "expense_splits", filter }, queue)
       .on("postgres_changes", { event: "*", schema: "public", table: "settlements", filter }, queue)
+      .on("postgres_changes", { event: "*", schema: "public", table: "card_deposits", filter }, queue)
+      .on("postgres_changes", { event: "*", schema: "public", table: "cards", filter }, queue)
       .subscribe();
 
     const onVisible = () => document.visibilityState === "visible" && refetch();
@@ -136,8 +172,9 @@ export function ExpensesView({
     const set = new Set<string>([currentMonth]);
     for (const e of expenses) set.add(monthOf(e.expense_date));
     for (const s of settlements) set.add(monthOf(s.settled_on));
+    for (const d of deposits) set.add(monthOf(d.deposit_date));
     return [...set].sort().reverse();
-  }, [expenses, settlements, currentMonth]);
+  }, [expenses, settlements, deposits, currentMonth]);
 
   const visibleExpenses = useMemo(
     () =>
@@ -145,9 +182,10 @@ export function ExpensesView({
         (e) =>
           (!monthFilter || monthOf(e.expense_date) === monthFilter) &&
           (!categoryFilter || e.category === categoryFilter) &&
-          (!personFilter || e.paid_by === personFilter),
+          (!personFilter || e.paid_by === personFilter) &&
+          (!cardFilter || e.card_id === cardFilter),
       ),
-    [expenses, monthFilter, categoryFilter, personFilter],
+    [expenses, monthFilter, categoryFilter, personFilter, cardFilter],
   );
 
   const history = useMemo<HistoryRow[]>(() => {
@@ -162,11 +200,36 @@ export function ExpensesView({
       for (const settlement of settlements) {
         if (monthFilter && monthOf(settlement.settled_on) !== monthFilter) continue;
         if (personFilter && settlement.from_participant !== personFilter && settlement.to_participant !== personFilter) continue;
+        if (cardFilter) continue;
         rows.push({ kind: "settlement", key: `s-${settlement.id}`, date: settlement.settled_on, created: settlement.created_at, settlement });
+      }
+      // Los ingresos a tarjetas también forman parte del historial.
+      const personUser = participants.find((p) => p.id === personFilter)?.user_id;
+      for (const deposit of deposits) {
+        if (monthFilter && monthOf(deposit.deposit_date) !== monthFilter) continue;
+        if (personFilter && deposit.deposited_by !== personUser) continue;
+        if (cardFilter && deposit.card_id !== cardFilter) continue;
+        rows.push({ kind: "deposit", key: `i-${deposit.id}`, date: deposit.deposit_date, created: deposit.created_at, deposit });
       }
     }
     return rows.sort((a, b) => b.date.localeCompare(a.date) || b.created.localeCompare(a.created));
-  }, [visibleExpenses, settlements, monthFilter, categoryFilter, personFilter]);
+  }, [visibleExpenses, settlements, deposits, participants, monthFilter, categoryFilter, personFilter, cardFilter]);
+
+  /** Saldo de cada tarjeta de débito: lo inicial, más ingresos, menos lo gastado con ella. */
+  const debitCards = useMemo(
+    () =>
+      cards
+        .filter((c) => c.kind === "debit")
+        .map((card) => ({
+          card,
+          cents: debitBalanceCents(
+            card.initial_balance,
+            deposits.filter((d) => d.card_id === card.id),
+            expenses.filter((e) => e.card_id === card.id),
+          ),
+        })),
+    [cards, deposits, expenses],
+  );
 
   const summary = useMemo(() => {
     const scope = expenses.filter((e) => !monthFilter || monthOf(e.expense_date) === monthFilter);
@@ -175,7 +238,8 @@ export function ExpensesView({
     const byPerson = new Map<string, number>();
     for (const e of scope) {
       byCategory.set(e.category, (byCategory.get(e.category) ?? 0) + toCents(e.amount));
-      byPerson.set(e.paid_by, (byPerson.get(e.paid_by) ?? 0) + toCents(e.amount));
+      const payer = e.paid_by ?? POOL;
+      byPerson.set(payer, (byPerson.get(payer) ?? 0) + toCents(e.amount));
     }
     return {
       total,
@@ -208,17 +272,25 @@ export function ExpensesView({
     if (error) refetch();
   }
 
+  async function removeDeposit(deposit: DepositRow) {
+    setDepositDetail(null);
+    setDeposits((prev) => prev.filter((d) => d.id !== deposit.id));
+    const { error } = await supabase.from("card_deposits").delete().eq("id", deposit.id);
+    if (error) refetch();
+  }
+
   function exportCsv() {
     const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
     const lines = [
-      ["Fecha", "Concepto", "Categoría", "Importe", "Pagó"].join(";"),
+      ["Fecha", "Concepto", "Categoría", "Importe", "Pagó", "Tarjeta"].join(";"),
       ...visibleExpenses.map((e) =>
         [
           formatDate(e.expense_date),
           escape(e.description),
           escape(e.category),
           e.amount.toFixed(2).replace(".", ","),
-          escape(person(e.paid_by)?.name ?? ""),
+          escape(e.paid_by ? (person(e.paid_by)?.name ?? "") : "Cuenta compartida"),
+          escape(cardOf(e.card_id)?.name ?? ""),
         ].join(";"),
       ),
     ];
@@ -235,6 +307,7 @@ export function ExpensesView({
   const onSaved = () => {
     setExpenseSheet({ open: false, expense: null });
     setSettleSheet({ open: false, suggestion: null });
+    setDepositOpen(false);
     refetch();
   };
 
@@ -266,6 +339,12 @@ export function ExpensesView({
               <Download size={18} />
             </button>
             <button
+              onClick={() => setDepositOpen(true)}
+              className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-line bg-surface px-3 text-sm font-medium text-forest transition active:scale-95 lg:min-h-11 lg:rounded-2xl lg:px-4"
+            >
+              <PiggyBank size={16} /> Ingreso
+            </button>
+            <button
               onClick={() => setExpenseSheet({ open: true, expense: null })}
               className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-forest px-3.5 text-sm font-medium text-surface shadow-sm transition active:scale-95 lg:min-h-11 lg:rounded-2xl lg:px-5"
             >
@@ -277,9 +356,10 @@ export function ExpensesView({
 
       <GastosTabs active="compartidos" />
 
-      <div className="mt-1 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:grid-rows-[auto_1fr] lg:gap-x-10">
+      <div className="mt-1 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:gap-x-10">
+       <div className="flex flex-col gap-4 lg:col-start-2 lg:row-start-1 lg:self-start">
         {/* Balance */}
-        <div className="rounded-2xl border border-line bg-surface p-4 lg:col-start-2 lg:row-start-1 lg:p-5">
+        <div className="rounded-2xl border border-line bg-surface p-4 lg:p-5">
           <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">Balance</p>
           <p className={`mt-1 font-display text-xl font-bold leading-snug lg:text-2xl ${toneClass}`}>{headline}</p>
 
@@ -302,8 +382,29 @@ export function ExpensesView({
           )}
         </div>
 
+        {/* Dinero en las tarjetas de débito */}
+        {debitCards.length > 0 && (
+          <div className="rounded-2xl border border-line bg-surface p-4 lg:p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">Dinero en tarjetas</p>
+              <Link href="/gastos/tarjetas" className="text-xs font-medium text-forest">Ver detalle</Link>
+            </div>
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {debitCards.map(({ card, cents }) => (
+                <li key={card.id} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <CreditCard size={15} style={{ color: colorFor(card.color) }} className="shrink-0" />
+                    <span className="truncate">{cardLabel(card)}</span>
+                  </span>
+                  <span className={`font-medium ${cents < 0 ? "text-hanko" : ""}`}>{formatEUR(cents)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Resumen del mes */}
-        <div className="rounded-2xl border border-line bg-surface p-4 lg:col-start-2 lg:row-start-2 lg:self-start lg:p-5">
+        <div className="rounded-2xl border border-line bg-surface p-4 lg:p-5">
           <div className="flex items-baseline justify-between gap-3">
             <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">
               {monthFilter ? "Gastado en el mes" : "Total gastado"}
@@ -342,8 +443,10 @@ export function ExpensesView({
           )}
         </div>
 
+       </div>
+
         {/* Historial */}
-        <div className="lg:col-start-1 lg:row-span-2 lg:row-start-1">
+        <div className="lg:col-start-1 lg:row-start-1">
           <div className="flex gap-2 overflow-x-auto pb-1">
             <select className={select} value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} aria-label="Mes">
               <option value="">Todos los meses</option>
@@ -363,6 +466,14 @@ export function ExpensesView({
                 <option key={p.id} value={p.id}>{p.id === me.id ? "Yo" : p.name}</option>
               ))}
             </select>
+            {cards.length > 0 && (
+              <select className={select} value={cardFilter} onChange={(e) => setCardFilter(e.target.value)} aria-label="Tarjeta">
+                <option value="">Todas las tarjetas</option>
+                {cards.map((c) => (
+                  <option key={c.id} value={c.id}>{cardLabel(c)}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {history.length === 0 ? (
@@ -377,11 +488,20 @@ export function ExpensesView({
           ) : (
             <ul className="mt-2 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
               {history.map((row) =>
-                row.kind === "expense" ? (
+                row.kind === "deposit" ? (
+                  <DepositItem
+                    key={row.key}
+                    deposit={row.deposit}
+                    cardName={cardOf(row.deposit.card_id) ? cardLabel(cardOf(row.deposit.card_id)!) : "Tarjeta eliminada"}
+                    by={userName(row.deposit.deposited_by)}
+                    onOpen={() => setDepositDetail(row.deposit)}
+                  />
+                ) : row.kind === "expense" ? (
                   <ExpenseItem
                     key={row.key}
                     expense={row.expense}
-                    payer={nameOf(row.expense.paid_by)}
+                    payer={payerOf(row.expense)}
+                    cardText={cardOf(row.expense.card_id) ? cardLabel(cardOf(row.expense.card_id)!) : null}
                     mine={mySplit(row.expense.id)}
                     onOpen={() => setExpenseSheet({ open: true, expense: row.expense })}
                   />
@@ -423,6 +543,7 @@ export function ExpensesView({
         groupId={groupId}
         participants={participants}
         meId={me.id}
+        cards={cards}
         expense={expenseSheet.expense}
         splits={splits}
         onSaved={onSaved}
@@ -437,6 +558,25 @@ export function ExpensesView({
         participants={participants}
         suggestion={settleSheet.suggestion}
         onSaved={onSaved}
+      />
+
+      <DepositSheet
+        open={depositOpen}
+        onClose={() => setDepositOpen(false)}
+        cards={cards.filter((c) => c.kind === "debit")}
+        defaultCardId={cardFilter || null}
+        people={participants.filter((p) => p.user_id).map((p) => ({ id: p.user_id as string, name: p.name }))}
+        meId={userId}
+        householdId={householdId}
+        onSaved={onSaved}
+      />
+
+      <DepositDetailSheet
+        deposit={depositDetail}
+        cardName={depositDetail && cardOf(depositDetail.card_id) ? cardLabel(cardOf(depositDetail.card_id)!) : "una tarjeta"}
+        by={userName(depositDetail?.deposited_by ?? null)}
+        onClose={() => setDepositDetail(null)}
+        onDelete={removeDeposit}
       />
 
       <BottomSheet open={!!settlementDetail} onClose={() => setSettlementDetail(null)} title="Pago registrado">
@@ -460,14 +600,35 @@ export function ExpensesView({
   );
 }
 
+function DepositItem({ deposit, cardName, by, onOpen }: { deposit: DepositRow; cardName: string; by: string; onOpen: () => void }) {
+  return (
+    <li>
+      <button onClick={onOpen} className="flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-forest/15 text-forest">
+        <PiggyBank size={18} strokeWidth={1.75} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[15px]">{deposit.note?.trim() || "Ingreso"} · {cardName}</span>
+        <span className="block text-xs text-ink-soft">
+          Puso {by} · {formatDate(deposit.deposit_date)}
+        </span>
+      </span>
+      <span className="text-[15px] font-medium text-forest">+{formatEUR(toCents(deposit.amount))}</span>
+      </button>
+    </li>
+  );
+}
+
 function ExpenseItem({
   expense,
   payer,
+  cardText,
   mine,
   onOpen,
 }: {
   expense: Expense;
   payer: string;
+  cardText: string | null;
   mine: number;
   onOpen: () => void;
 }) {
@@ -485,7 +646,9 @@ function ExpenseItem({
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[15px]">{expense.description}</span>
           <span className="block text-xs text-ink-soft">
-            Pagó {payer} · {formatDate(expense.expense_date)}
+            {[expense.paid_by ? `Pagó ${payer}` : cardText ? null : "Cuenta compartida", cardText, formatDate(expense.expense_date)]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
         </span>
         <span className="text-right">

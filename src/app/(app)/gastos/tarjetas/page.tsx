@@ -5,6 +5,7 @@ import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { requireHousehold } from "@/lib/household";
 import { createClient } from "@/lib/supabase/server";
 import { CardsView } from "./CardsView";
+import type { CardExpenseRow, DepositRow } from "@/lib/tarjetas/debit";
 import type { Card, Installment, Person, Purchase, Share } from "./types";
 
 function Unavailable({ step, detail }: { step: string; detail: string }) {
@@ -28,7 +29,7 @@ function Unavailable({ step, detail }: { step: string; detail: string }) {
 async function Tarjetas() {
   const supabase = await createClient();
 
-  const [{ user, household }, cards, purchases, shares, installments, members, profiles] = await Promise.all([
+  const [{ user, household }, cards, purchases, shares, installments, members, profiles, deposits, cardExpenses, participants] = await Promise.all([
     requireHousehold(),
     supabase.from("cards").select("*").eq("archived", false).order("created_at"),
     supabase.from("card_purchases").select("*").order("purchase_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
@@ -36,6 +37,9 @@ async function Tarjetas() {
     supabase.from("card_installments").select("id, purchase_id, number, due_date, amount, manual_paid").limit(20000),
     supabase.from("household_members").select("user_id").order("joined_at"),
     supabase.from("profiles").select("id, display_name, color"),
+    supabase.from("card_deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }).limit(2000),
+    supabase.from("expenses").select("id, card_id, description, amount, expense_date, paid_by, created_at").not("card_id", "is", null).limit(5000),
+    supabase.from("expense_participants").select("id, name"),
   ]);
 
   const failed = [
@@ -44,6 +48,8 @@ async function Tarjetas() {
     ["leer los repartos", shares.error],
     ["leer las cuotas", installments.error],
     ["leer los miembros del hogar", members.error],
+    ["leer los ingresos (¿ejecutaste la migración 0007?)", deposits.error],
+    ["leer los gastos con tarjeta (¿ejecutaste la migración 0007?)", cardExpenses.error],
   ].find(([, e]) => e) as [string, { code: string; message: string }] | undefined;
   if (failed) return <Unavailable step={failed[0]} detail={`${failed[1].code}: ${failed[1].message}`} />;
 
@@ -63,6 +69,9 @@ async function Tarjetas() {
       initialPurchases={(purchases.data ?? []) as Purchase[]}
       initialShares={(shares.data ?? []) as Share[]}
       initialInstallments={(installments.data ?? []) as Installment[]}
+      initialDeposits={(deposits.data ?? []) as DepositRow[]}
+      initialCardExpenses={(cardExpenses.data ?? []) as CardExpenseRow[]}
+      participantNames={Object.fromEntries((participants.data ?? []).map((p) => [p.id, p.name as string]))}
     />
   );
 }

@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { CatIcon } from "@/components/ui/CatIcon";
 import { colorFor } from "@/lib/compras/icons";
 import { createClient } from "@/lib/supabase/client";
+import { cardLabel } from "@/lib/tarjetas/labels";
 import type { Participant } from "@/lib/gastos/balance";
 import { EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
 import { evenPercents, formatEUR, parseAmount, splitByPercent, splitEqual, toCents } from "@/lib/gastos/money";
@@ -13,12 +15,17 @@ import type { Expense, Split } from "./types";
 
 type Mode = "equal" | "percent" | "exact";
 
+/** Lo mínimo de una tarjeta para elegirla al pagar. */
+export type PayCard = { id: string; name: string; last4: string | null; kind: "credit" | "debit"; owner_user_id: string | null };
+
 type Props = {
   open: boolean;
   onClose: () => void;
   groupId: string;
   participants: Participant[];
   meId: string | null;
+  /** Tarjetas registradas; solo se puede pagar con una de ellas. */
+  cards: PayCard[];
   /** Gasto que se edita; null para crear uno nuevo. */
   expense: Expense | null;
   splits: Split[];
@@ -45,7 +52,7 @@ export function ExpenseSheet(props: Props) {
   );
 }
 
-function ExpenseForm({ groupId, participants, meId, expense, splits, onSaved, onDelete }: Props) {
+function ExpenseForm({ groupId, participants, meId, cards, expense, splits, onSaved, onDelete }: Props) {
   const ids = participants.map((p) => p.id);
 
   // Si el gasto ya existe, deduce cómo se repartió para mostrarlo igual.
@@ -67,13 +74,25 @@ function ExpenseForm({ groupId, participants, meId, expense, splits, onSaved, on
   const [amountText, setAmountText] = useState(expense ? String(expense.amount).replace(".", ",") : "");
   const [date, setDate] = useState(expense?.expense_date ?? todayISO());
   const [category, setCategory] = useState(expense?.category ?? "Supermercado");
-  const [paidBy, setPaidBy] = useState(expense?.paid_by ?? meId ?? ids[0] ?? "");
+  const [cardId, setCardId] = useState(expense?.card_id ?? "");
+  const [paidBy, setPaidBy] = useState(expense ? (expense.paid_by ?? meId ?? ids[0] ?? "") : (meId ?? ids[0] ?? ""));
   const [mode, setMode] = useState<Mode>(initial.mode);
   const [included, setIncluded] = useState<Set<string>>(initial.included);
   const [percents, setPercents] = useState<Record<string, string>>(() => evenPercents(ids));
   const [exacts, setExacts] = useState<Record<string, string>>(initial.exacts);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const card = cards.find((c) => c.id === cardId);
+  // Una tarjeta sin titular es de los dos: el dinero sale de la cuenta común y no hay un "pagador".
+  const sharedCard = !!card && card.owner_user_id === null;
+
+  function chooseCard(id: string) {
+    setCardId(id);
+    const chosen = cards.find((c) => c.id === id);
+    const owner = chosen?.owner_user_id ? participants.find((p) => p.user_id === chosen.owner_user_id) : undefined;
+    if (owner) setPaidBy(owner.id);
+  }
 
   const amount = parseAmount(amountText);
   const totalCents = amount ? toCents(amount) : 0;
@@ -117,7 +136,8 @@ function ExpenseForm({ groupId, participants, meId, expense, splits, onSaved, on
       p_amount: amount,
       p_date: date,
       p_category: category,
-      p_paid_by: paidBy,
+      p_paid_by: sharedCard ? null : paidBy,
+      p_card: cardId || null,
       p_splits: Object.entries(result).map(([participant_id, cents]) => ({ participant_id, amount: cents / 100 })),
     });
     setSaving(false);
@@ -139,6 +159,10 @@ function ExpenseForm({ groupId, participants, meId, expense, splits, onSaved, on
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
+      {expense?.notes && (
+        <p className="rounded-xl bg-background px-3.5 py-2.5 text-sm text-ink-soft">{expense.notes}</p>
+      )}
+
       <div>
         <label className={label} htmlFor="g-desc">Concepto</label>
         <input id="g-desc" className={field} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Compra semanal, luz, cena…" maxLength={80} autoFocus />
@@ -178,15 +202,46 @@ function ExpenseForm({ groupId, participants, meId, expense, splits, onSaved, on
       </div>
 
       <div>
-        <label className={label} htmlFor="g-paid">¿Quién pagó?</label>
-        <select id="g-paid" className={field} value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>
-          {participants.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.user_id && p.id === meId ? `${p.name} (tú)` : p.name}
+        <label className={label} htmlFor="g-card">Pagado con</label>
+        <select id="g-card" className={field} value={cardId} onChange={(e) => chooseCard(e.target.value)}>
+          <option value="">Efectivo u otro medio</option>
+          {cards.map((c) => (
+            <option key={c.id} value={c.id}>
+              {cardLabel(c)} · {c.kind === "debit" ? "Débito" : "Crédito"}
+              {c.owner_user_id === null ? " · Compartida" : ""}
             </option>
           ))}
         </select>
+        {cards.length === 0 && (
+          <p className="mt-1.5 px-1 text-xs text-ink-soft">
+            Para pagar con una tarjeta, primero{" "}
+            <Link href="/gastos/tarjetas" className="font-medium text-forest underline underline-offset-2">
+              regístrala en Tarjetas
+            </Link>
+            .
+          </p>
+        )}
+        {card?.kind === "debit" && (
+          <p className="mt-1.5 px-1 text-xs text-ink-soft">Este gasto se descontará del saldo de la tarjeta.</p>
+        )}
       </div>
+
+      {sharedCard ? (
+        <p className="rounded-xl bg-moss/15 px-3.5 py-3 text-sm text-forest">
+          Pagado con la tarjeta compartida: sale del dinero de los dos, así que no crea deudas entre ustedes.
+        </p>
+      ) : (
+        <div>
+          <label className={label} htmlFor="g-paid">¿Quién pagó?</label>
+          <select id="g-paid" className={field} value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>
+            {participants.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.user_id && p.id === meId ? `${p.name} (tú)` : p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div>
         <p className={label}>Dividir</p>
