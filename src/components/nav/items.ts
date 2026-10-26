@@ -25,10 +25,8 @@ export const navModules: NavItem[] = [
   { href: "/baul", label: "Baúl", icon: Vault, available: true },
 ];
 
-/** Lo que va siempre a la vista en la barra inferior del teléfono. */
-const TAB_HREFS = ["/inicio", "/compras", "/gastos", "/notitas"];
+/** Cuántos módulos van en la barra inferior del teléfono. */
+export const TAB_COUNT = 4;
 
-export const tabItems = navModules.filter((m) => TAB_HREFS.includes(m.href));
-
-/** El resto de módulos, que en el teléfono viven dentro de «Más». */
-export const moreItems = navModules.filter((m) => !TAB_HREFS.includes(m.href));
+/** Lo que va en la barra inferior hasta que cada persona elige los suyos. */
+export const DEFAULT_TAB_HREFS = ["/inicio", "/compras", "/gastos", "/notitas"];

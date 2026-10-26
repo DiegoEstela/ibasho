@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { Bell, Check, Minus, Pencil, Plus, Share2, Trash2, X } from "lucide-react";
+import { Bell, Check, House, Minus, Pencil, Plus, Share2, Trash2, X } from "lucide-react";
 import { ShareCode } from "@/components/onboarding/ShareCode";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatEUR } from "@/lib/gastos/money";
 import { timeAgo } from "@/lib/utils/time";
 import { formatRange, tripPhase } from "@/lib/viajes/dates";
+import { CuentasButton } from "./CuentasButton";
 import { Reminders, type ReminderTask } from "./Reminders";
 import { MIN_SLOTS, WIDGETS, type WidgetDef, type WidgetId } from "./catalog";
 
@@ -209,7 +210,12 @@ export function Dashboard({
   return (
     <section className="max-w-[1500px]">
       <PageHeader
-        title={`Hogar: ${householdName}`}
+        title={
+          <span className="flex min-w-0 items-center gap-2 lg:gap-3">
+            <House className="size-5 shrink-0 text-forest lg:size-8" strokeWidth={1.75} aria-label="Hogar" />
+            <span className="truncate">{householdName}</span>
+          </span>
+        }
         actions={
           <>
             <button onClick={openAvisos} aria-label={unread ? `Novedades: ${unread} sin leer` : "Novedades"} className={iconButton}>
@@ -226,6 +232,8 @@ export function Dashboard({
           </>
         }
       />
+
+      <CuentasButton />
 
       <Reminders tasks={reminders} today={madridToday} />
 
