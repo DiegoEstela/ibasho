@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { createClient } from "@/lib/supabase/client";
 import type { Participant, Transfer } from "@/lib/gastos/balance";
@@ -41,7 +42,14 @@ function SettleForm({ householdId, groupId, participants, suggestion, onSaved }:
   const [amountText, setAmountText] = useState(suggestion ? (suggestion.cents / 100).toFixed(2).replace(".", ",") : "");
   const [date, setDate] = useState(todayISO());
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const save = useMutation({
+    mutationFn: async (row: Record<string, unknown>) => {
+      const { error: insertError } = await createClient().from("settlements").insert(row);
+      if (insertError) throw new Error(insertError.message);
+    },
+    meta: { silent: true },
+  });
+  const saving = save.isPending;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -50,17 +58,18 @@ function SettleForm({ householdId, groupId, participants, suggestion, onSaved }:
     if (!amount || amount <= 0) return setError("Escribe un importe válido, por ejemplo 20,00.");
     if (from === to) return setError("Quien paga y quien recibe deben ser personas distintas.");
 
-    setSaving(true);
-    const { error: insertError } = await createClient().from("settlements").insert({
-      household_id: householdId,
-      group_id: groupId,
-      from_participant: from,
-      to_participant: to,
-      amount,
-      settled_on: date,
-    });
-    setSaving(false);
-    if (insertError) return setError("No se pudo registrar el pago. Inténtalo de nuevo.");
+    try {
+      await save.mutateAsync({
+        household_id: householdId,
+        group_id: groupId,
+        from_participant: from,
+        to_participant: to,
+        amount,
+        settled_on: date,
+      });
+    } catch {
+      return setError("No se pudo registrar el pago. Inténtalo de nuevo.");
+    }
     onSaved();
   }
 

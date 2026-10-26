@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
@@ -95,7 +96,15 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
   const [percents, setPercents] = useState<Record<string, string>>(() => evenPercents(ids));
   const [exacts, setExacts] = useState<Record<string, string>>(initial.exacts);
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
+  // El error se muestra dentro del formulario (silent); al guardar, React Query actualiza las pantallas abiertas.
+  const save = useMutation({
+    mutationFn: async (args: Record<string, unknown>) => {
+      const { error: rpcError } = await createClient().rpc("save_expense", args);
+      if (rpcError) throw new Error(rpcError.message);
+    },
+    meta: { silent: true },
+  });
+  const saving = save.isPending;
 
   const card = cards.find((c) => c.id === cardId);
   // Una tarjeta sin titular es de los dos: el dinero sale de la cuenta común y no hay un "pagador".
@@ -179,23 +188,24 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
     const result = buildSplits();
     if (typeof result === "string") return setError(result);
 
-    setSaving(true);
-    const { error: rpcError } = await createClient().rpc("save_expense", {
-      p_id: expense?.id ?? null,
-      p_group: groupId,
-      p_description: description.trim(),
-      p_amount: amount,
-      p_date: date,
-      p_category: category,
-      p_paid_by: forcedPool ? null : paidBy || null,
-      p_card: cardId || null,
-      p_currency: foreign ? currency : "EUR",
-      p_original_amount: foreign ? typed : null,
-      p_rate: foreign ? rate : null,
-      p_splits: Object.entries(result).map(([participant_id, cents]) => ({ participant_id, amount: cents / 100 })),
-    });
-    setSaving(false);
-    if (rpcError) return setError("No se pudo guardar el gasto. Revisa tu conexión e inténtalo de nuevo.");
+    try {
+      await save.mutateAsync({
+        p_id: expense?.id ?? null,
+        p_group: groupId,
+        p_description: description.trim(),
+        p_amount: amount,
+        p_date: date,
+        p_category: category,
+        p_paid_by: forcedPool ? null : paidBy || null,
+        p_card: cardId || null,
+        p_currency: foreign ? currency : "EUR",
+        p_original_amount: foreign ? typed : null,
+        p_rate: foreign ? rate : null,
+        p_splits: Object.entries(result).map(([participant_id, cents]) => ({ participant_id, amount: cents / 100 })),
+      });
+    } catch {
+      return setError("No se pudo guardar el gasto. Revisa tu conexión e inténtalo de nuevo.");
+    }
     if (!expense && !trip) {
       notifyPartner({ kind: "gastos", title: "Gasto nuevo", body: `${profile.name || "Tu pareja"} anotó «${description.trim()}» · ${formatEUR(toCents(amount))}`, url: "/gastos" });
     }

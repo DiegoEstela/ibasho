@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { createClient } from "@/lib/supabase/client";
 import { evenPercents, formatEUR, parseAmount, toCents } from "@/lib/gastos/money";
@@ -54,7 +55,14 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
   const [mode, setMode] = useState<Mode>(people.length > 1 ? "equal" : "me");
   const [percents, setPercents] = useState<Record<string, string>>(() => evenPercents(ids));
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const save = useMutation({
+    mutationFn: async (args: Record<string, unknown>) => {
+      const { error: rpcError } = await createClient().rpc("save_card_purchase", args);
+      if (rpcError) throw new Error(rpcError.message);
+    },
+    meta: { silent: true },
+  });
+  const saving = save.isPending;
 
   const card = cards.find((c) => c.id === cardId);
   const amount = parseAmount(amountText);
@@ -101,21 +109,22 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
     const shares = buildShares();
     if (typeof shares === "string") return setError(shares);
 
-    setSaving(true);
-    const { error: rpcError } = await createClient().rpc("save_card_purchase", {
-      p_card: card.id,
-      p_description: description.trim(),
-      p_merchant: merchant.trim() || null,
-      p_date: date,
-      p_total: amount,
-      p_interest: interest,
-      p_count: count,
-      p_notes: null,
-      p_shares: shares,
-      p_installments: preview.rows.map((r) => ({ number: r.number, due_date: r.due_date, amount: r.cents / 100 })),
-    });
-    setSaving(false);
-    if (rpcError) return setError("No se pudo guardar la compra. Revisa tu conexión e inténtalo de nuevo.");
+    try {
+      await save.mutateAsync({
+        p_card: card.id,
+        p_description: description.trim(),
+        p_merchant: merchant.trim() || null,
+        p_date: date,
+        p_total: amount,
+        p_interest: interest,
+        p_count: count,
+        p_notes: null,
+        p_shares: shares,
+        p_installments: preview.rows.map((r) => ({ number: r.number, due_date: r.due_date, amount: r.cents / 100 })),
+      });
+    } catch {
+      return setError("No se pudo guardar la compra. Revisa tu conexión e inténtalo de nuevo.");
+    }
     onSaved();
   }
 

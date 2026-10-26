@@ -10,6 +10,9 @@ const UNIT_OPTIONS = ["", "g", "kg", "ml", "l", "ud", "cda", "cdta", "taza", "pi
 const key = (s: string) => s.trim().toLowerCase();
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+const compact =
+  "h-10 rounded-lg border border-line bg-background text-[15px] text-ink outline-none placeholder:text-ink-soft/60 focus:border-forest";
+
 const field =
   "min-h-11 w-full rounded-xl border border-line bg-surface px-3 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest";
 
@@ -78,47 +81,56 @@ export function IngredientsEditor({ products, initial }: { products: string[]; i
       <input type="hidden" name="ingredients_json" value={payload} />
 
       {rows.length > 0 && (
-        <ul className="mb-3 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
-          {rows.map((r) => (
-            <li key={key(r.name)} className="flex flex-wrap items-center gap-2 px-3 py-2">
-              <span className="min-w-0 flex-1 basis-32">
-                <span className="block truncate text-[15px]">{capitalize(r.name)}</span>
-                {!known.has(key(r.name)) && <span className="block text-[11px] text-forest">Producto nuevo: se añade a la lista de productos</span>}
-              </span>
-              <input
-                ref={(el) => {
-                  qtyRefs.current[key(r.name)] = el;
-                }}
-                value={r.quantity}
-                onChange={(e) => update(r.name, { quantity: e.target.value })}
-                inputMode="decimal"
-                placeholder="Cant."
-                aria-label={`Cantidad de ${r.name}`}
-                className={`${field} !w-20`}
-              />
-              <select
-                value={r.unit}
-                onChange={(e) => update(r.name, { unit: e.target.value })}
-                aria-label={`Unidad de ${r.name}`}
-                className={`${field} !w-24`}
-              >
-                {(UNIT_OPTIONS.includes(r.unit) ? UNIT_OPTIONS : [...UNIT_OPTIONS, r.unit]).map((u) => (
-                  <option key={u} value={u}>
-                    {u || "—"}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => setRows((prev) => prev.filter((x) => key(x.name) !== key(r.name)))}
-                aria-label={`Quitar ${r.name}`}
-                className="flex size-9 shrink-0 items-center justify-center rounded-full text-ink-soft transition active:scale-90"
-              >
-                <X size={16} />
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="mb-3 overflow-hidden rounded-2xl border border-line bg-surface">
+          {/* Mismas columnas que las filas, para que todo quede alineado */}
+          <div className="flex items-center gap-2 border-b border-line bg-washi-deep/50 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-soft">
+            <span className="min-w-0 flex-1">Ingrediente</span>
+            <span className="w-16 text-center">Cant.</span>
+            <span className="w-[4.5rem] text-center">Unidad</span>
+            <span className="w-8" aria-hidden />
+          </div>
+          <ul className="divide-y divide-line">
+            {rows.map((r) => (
+              <li key={key(r.name)} className="flex items-center gap-2 py-2 pl-3 pr-1.5">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[15px] leading-tight">{capitalize(r.name)}</span>
+                  {!known.has(key(r.name)) && <span className="mt-0.5 inline-block rounded-full bg-forest/15 px-1.5 text-[10px] font-medium text-forest">Nuevo</span>}
+                </span>
+                <input
+                  ref={(el) => {
+                    qtyRefs.current[key(r.name)] = el;
+                  }}
+                  value={r.quantity}
+                  onChange={(e) => update(r.name, { quantity: e.target.value })}
+                  inputMode="decimal"
+                  placeholder="—"
+                  aria-label={`Cantidad de ${r.name}`}
+                  className={`${compact} w-16 text-center`}
+                />
+                <select
+                  value={r.unit}
+                  onChange={(e) => update(r.name, { unit: e.target.value })}
+                  aria-label={`Unidad de ${r.name}`}
+                  className={`${compact} w-[4.5rem] px-1.5`}
+                >
+                  {(UNIT_OPTIONS.includes(r.unit) ? UNIT_OPTIONS : [...UNIT_OPTIONS, r.unit]).map((u) => (
+                    <option key={u} value={u}>
+                      {u || "—"}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setRows((prev) => prev.filter((x) => key(x.name) !== key(r.name)))}
+                  aria-label={`Quitar ${r.name}`}
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-soft transition hover:bg-hanko/10 hover:text-hanko active:scale-90"
+                >
+                  <X size={16} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <div className="relative">
@@ -175,7 +187,7 @@ export function IngredientsEditor({ products, initial }: { products: string[]; i
           </ul>
         )}
       </div>
-      <p className="mt-1.5 text-xs text-ink-soft">Los productos nuevos quedan guardados en la lista de productos de Compras.</p>
+      <p className="mt-1.5 text-xs text-ink-soft">Los marcados como «Nuevo» se guardan también en la lista de productos de Compras.</p>
     </div>
   );
 }

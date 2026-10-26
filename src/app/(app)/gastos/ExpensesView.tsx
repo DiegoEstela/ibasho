@@ -1,15 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Banknote, Download, PiggyBank, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { CatIcon } from "@/components/ui/CatIcon";
 import { GastosTabs } from "@/components/ui/GastosTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { QueryErrorBanner } from "@/components/query/QueryErrorBanner";
 import { colorFor } from "@/lib/compras/icons";
 import { createClient } from "@/lib/supabase/client";
 import { netBalances, simplifyDebts, type Participant, type Transfer } from "@/lib/gastos/balance";
 import { expenseCategory, EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
+import { gastosKey, useGastos } from "@/lib/gastos/queries";
 import { formatEUR, toCents } from "@/lib/gastos/money";
 import type { DepositRow } from "@/lib/tarjetas/debit";
 import { cardLabel } from "@/lib/tarjetas/labels";
@@ -64,11 +67,19 @@ export function ExpensesView({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   });
 
-  const [expenses, setExpenses] = useState(initialExpenses);
-  const [splits, setSplits] = useState(initialSplits);
-  const [settlements, setSettlements] = useState(initialSettlements);
-  const [cards, setCards] = useState(initialCards);
-  const [deposits, setDeposits] = useState(initialDeposits);
+  const queryClient = useQueryClient();
+  const {
+    data: { expenses, splits, settlements, cards, deposits },
+    patch,
+    isError,
+    isFetching,
+  } = useGastos(supabase, groupId, {
+    expenses: initialExpenses,
+    splits: initialSplits,
+    settlements: initialSettlements,
+    cards: initialCards,
+    deposits: initialDeposits,
+  });
 
   const [monthFilter, setMonthFilter] = useState<string>(currentMonth);
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -103,20 +114,7 @@ export function ExpensesView({
   );
 
   // ---------- Sincronización ----------
-  const refetch = useCallback(async () => {
-    const [e, s, st, c, d] = await Promise.all([
-      supabase.from("expenses").select("*").eq("group_id", groupId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
-      supabase.from("expense_splits").select("expense_id, participant_id, amount, expenses!inner(group_id)").eq("expenses.group_id", groupId).limit(10000),
-      supabase.from("settlements").select("*").eq("group_id", groupId).order("settled_on", { ascending: false }).limit(500),
-      supabase.from("cards").select("*").eq("archived", false).order("created_at"),
-      supabase.from("card_deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }).limit(2000),
-    ]);
-    if (c.data) setCards(c.data as Card[]);
-    if (d.data) setDeposits(d.data as DepositRow[]);
-    if (e.data) setExpenses(e.data as Expense[]);
-    if (s.data) setSplits((s.data as unknown as Split[]).map(({ expense_id, participant_id, amount }) => ({ expense_id, participant_id, amount })));
-    if (st.data) setSettlements(st.data as Settlement[]);
-  }, [supabase, groupId]);
+  const refetch = useCallback(() => queryClient.invalidateQueries({ queryKey: gastosKey(groupId) }), [queryClient, groupId]);
 
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
@@ -251,25 +249,34 @@ export function ExpensesView({
   const mySplit = (expenseId: string) => splitsByExpense.get(expenseId)?.find((s) => s.participant_id === me?.id)?.amount ?? 0;
 
   // ---------- Acciones ----------
-  async function removeExpense(expense: Expense) {
+  const remove = useMutation({
+    mutationFn: async ({ table, id }: { table: "expenses" | "settlements" | "card_deposits"; id: string }) => {
+      const { error } = await supabase.from(table).delete().eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    meta: { errorMessage: "No se pudo borrar." },
+    // Si falla, se vuelve a pedir lo que había para que la fila reaparezca.
+    onError: () => {
+      refetch();
+    },
+  });
+
+  function removeExpense(expense: Expense) {
     setExpenseSheet({ open: false, expense: null });
-    setExpenses((prev) => prev.filter((e) => e.id !== expense.id));
-    const { error } = await supabase.from("expenses").delete().eq("id", expense.id);
-    if (error) refetch();
+    patch((d) => ({ expenses: d.expenses.filter((e) => e.id !== expense.id) }));
+    remove.mutate({ table: "expenses", id: expense.id });
   }
 
-  async function removeSettlement(settlement: Settlement) {
+  function removeSettlement(settlement: Settlement) {
     setSettlementDetail(null);
-    setSettlements((prev) => prev.filter((s) => s.id !== settlement.id));
-    const { error } = await supabase.from("settlements").delete().eq("id", settlement.id);
-    if (error) refetch();
+    patch((d) => ({ settlements: d.settlements.filter((s) => s.id !== settlement.id) }));
+    remove.mutate({ table: "settlements", id: settlement.id });
   }
 
-  async function removeDeposit(deposit: DepositRow) {
+  function removeDeposit(deposit: DepositRow) {
     setDepositDetail(null);
-    setDeposits((prev) => prev.filter((d) => d.id !== deposit.id));
-    const { error } = await supabase.from("card_deposits").delete().eq("id", deposit.id);
-    if (error) refetch();
+    patch((d) => ({ deposits: d.deposits.filter((x) => x.id !== deposit.id) }));
+    remove.mutate({ table: "card_deposits", id: deposit.id });
   }
 
   function exportCsv() {
@@ -301,7 +308,6 @@ export function ExpensesView({
     setExpenseSheet({ open: false, expense: null });
     setSettleSheet({ open: false, suggestion: null });
     setDepositOpen(false);
-    refetch();
   };
 
   if (participants.length === 0 || !me) {
@@ -365,6 +371,7 @@ export function ExpensesView({
       />
 
       <GastosTabs active="compartidos" />
+      {isError && <QueryErrorBanner onRetry={refetch} retrying={isFetching} />}
 
       {/* Gastos | Saldos (solo en el teléfono; en pantallas grandes se ven juntos) */}
       <div className="mb-3 flex gap-1 rounded-xl bg-washi-deep p-1 lg:hidden" role="tablist" aria-label="Vista de gastos">

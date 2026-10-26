@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import Link from "next/link";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { parseAmount } from "@/lib/gastos/money";
@@ -65,7 +66,14 @@ function DepositForm({ cards, defaultCardId, people, meId, householdId, onSaved 
   const [by, setBy] = useState(meId);
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const save = useMutation({
+    mutationFn: async (row: Record<string, unknown>) => {
+      const { error: insertError } = await createClient().from("card_deposits").insert(row);
+      if (insertError) throw new Error(insertError.message);
+    },
+    meta: { silent: true },
+  });
+  const saving = save.isPending;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -73,17 +81,18 @@ function DepositForm({ cards, defaultCardId, people, meId, householdId, onSaved 
     const amount = parseAmount(amountText);
     if (!amount || amount <= 0) return setError("Escribe un importe válido, por ejemplo 100,00.");
 
-    setSaving(true);
-    const { error: insertError } = await createClient().from("card_deposits").insert({
-      household_id: householdId,
-      card_id: cardId,
-      amount,
-      deposit_date: date,
-      deposited_by: by,
-      note: note.trim() || null,
-    });
-    setSaving(false);
-    if (insertError) return setError("No se pudo registrar el ingreso. Inténtalo de nuevo.");
+    try {
+      await save.mutateAsync({
+        household_id: householdId,
+        card_id: cardId,
+        amount,
+        deposit_date: date,
+        deposited_by: by,
+        note: note.trim() || null,
+      });
+    } catch {
+      return setError("No se pudo registrar el ingreso. Inténtalo de nuevo.");
+    }
     onSaved();
   }
 

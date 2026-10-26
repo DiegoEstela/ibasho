@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { COLOR_KEYS, colorFor } from "@/lib/compras/icons";
@@ -48,7 +49,15 @@ function CardForm({ card, people, meId, householdId, linkedCount, onSaved }: Pro
   const [due, setDue] = useState(card?.due_day ? String(card.due_day) : "");
   const [balance, setBalance] = useState(card ? String(card.initial_balance).replace(".", ",") : "");
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
+  // El error se muestra dentro del formulario (silent); al guardar, React Query actualiza las pantallas abiertas.
+  const write = useMutation({
+    mutationFn: async (run: () => PromiseLike<{ error: { message: string } | null }>) => {
+      const { error: writeError } = await run();
+      if (writeError) throw new Error(writeError.message);
+    },
+    meta: { silent: true },
+  });
+  const saving = write.isPending;
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -83,22 +92,24 @@ function CardForm({ card, people, meId, householdId, linkedCount, onSaved }: Pro
       initial_balance: initial,
     };
 
-    setSaving(true);
     const supabase = createClient();
-    const { error: saveError } = card
-      ? await supabase.from("cards").update(payload).eq("id", card.id)
-      : await supabase.from("cards").insert({ ...payload, household_id: householdId });
-    setSaving(false);
-    if (saveError) return setError("No se pudo guardar la tarjeta. Inténtalo de nuevo.");
+    try {
+      await write.mutateAsync(() =>
+        card ? supabase.from("cards").update(payload).eq("id", card.id) : supabase.from("cards").insert({ ...payload, household_id: householdId }),
+      );
+    } catch {
+      return setError("No se pudo guardar la tarjeta. Inténtalo de nuevo.");
+    }
     onSaved();
   }
 
   async function remove() {
     if (!card) return;
-    setSaving(true);
-    const { error: deleteError } = await createClient().from("cards").delete().eq("id", card.id);
-    setSaving(false);
-    if (deleteError) return setError("No se pudo eliminar la tarjeta.");
+    try {
+      await write.mutateAsync(() => createClient().from("cards").delete().eq("id", card.id));
+    } catch {
+      return setError("No se pudo eliminar la tarjeta.");
+    }
     onSaved();
   }
 

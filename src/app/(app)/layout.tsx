@@ -4,6 +4,7 @@ import { TabBar } from "@/components/nav/TabBar";
 import { NoteReveal } from "@/components/notitas/NoteReveal";
 import { ProfileProvider } from "@/components/profile/ProfileProvider";
 import { InstallProvider } from "@/components/pwa/InstallProvider";
+import { QueryProvider } from "@/components/query/QueryProvider";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { requireHousehold } from "@/lib/household";
 
@@ -22,6 +23,7 @@ async function Notitas() {
 /** Móvil: contenido + tab bar inferior. Escritorio: sidebar fija y contenido a pantalla completa. */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
+    <QueryProvider>
     <InstallProvider>
     <ProfileProvider>
     <div className="min-h-dvh">
@@ -42,5 +44,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     </div>
     </ProfileProvider>
     </InstallProvider>
+    </QueryProvider>
   );
 }

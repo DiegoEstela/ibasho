@@ -114,12 +114,18 @@ body {
 .sheet-backdrop { animation: fade-in 0.2s ease-out; }
 .check-pop { animation: check-pop 0.3s ease-out; }
 
+@keyframes activity-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.activity-bar { animation: activity-slide 1.1s ease-in-out infinite; }
+
 @media (min-width: 1024px) {
   .sheet-panel { animation: fade-in 0.2s ease-out; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sheet-panel, .sheet-backdrop, .check-pop { animation: none; }
+  .sheet-panel, .sheet-backdrop, .check-pop, .activity-bar { animation: none; }
 }
 
 /* ===== Notitas ===== */

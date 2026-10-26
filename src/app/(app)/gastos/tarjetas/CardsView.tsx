@@ -1,13 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { CreditCard, Plus } from "lucide-react";
 import { GastosTabs } from "@/components/ui/GastosTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { QueryErrorBanner } from "@/components/query/QueryErrorBanner";
 import { colorFor } from "@/lib/compras/icons";
 import { formatEUR, toCents } from "@/lib/gastos/money";
 import { createClient } from "@/lib/supabase/client";
+import { tarjetasKey, useTarjetas } from "@/lib/tarjetas/queries";
 import { debitBalanceCents, type CardExpenseRow, type CardExpenseSplit, type DepositRow } from "@/lib/tarjetas/debit";
 import { isInstallmentPaid, projectByMonth, type InstallmentRow } from "@/lib/tarjetas/installments";
 import { personCents, purchaseStats, type PurchaseStats } from "@/lib/tarjetas/summary";
@@ -73,13 +76,21 @@ export function CardsView({
   const [today] = useState(todayISO);
   const currentMonth = today.slice(0, 7);
 
-  const [cards, setCards] = useState(initialCards);
-  const [purchases, setPurchases] = useState(initialPurchases);
-  const [shares, setShares] = useState(initialShares);
-  const [installments, setInstallments] = useState(initialInstallments);
-  const [deposits, setDeposits] = useState(initialDeposits);
-  const [cardExpenses, setCardExpenses] = useState(initialCardExpenses);
-  const [splits, setSplits] = useState(initialSplits);
+  const queryClient = useQueryClient();
+  const {
+    data: { cards, purchases, shares, installments, deposits, cardExpenses, splits },
+    patch,
+    isError,
+    isFetching,
+  } = useTarjetas(supabase, householdId, {
+    cards: initialCards,
+    purchases: initialPurchases,
+    shares: initialShares,
+    installments: initialInstallments,
+    deposits: initialDeposits,
+    cardExpenses: initialCardExpenses,
+    splits: initialSplits,
+  });
   const [depositOpen, setDepositOpen] = useState(false);
   const [depositDetailId, setDepositDetailId] = useState<string | null>(null);
 
@@ -101,24 +112,7 @@ export function CardsView({
   const nameOf = useCallback((id: string) => (id === userId ? "Tú" : (people.find((p) => p.id === id)?.name ?? "Alguien")), [people, userId]);
 
   // ---------- Sincronización ----------
-  const refetch = useCallback(async () => {
-    const [c, p, s, i, d, x, sp] = await Promise.all([
-      supabase.from("cards").select("*").eq("archived", false).order("created_at"),
-      supabase.from("card_purchases").select("*").order("purchase_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
-      supabase.from("card_purchase_shares").select("purchase_id, user_id, percent").limit(5000),
-      supabase.from("card_installments").select("id, purchase_id, number, due_date, amount, manual_paid, expense_id").limit(20000),
-      supabase.from("card_deposits").select("*").order("deposit_date", { ascending: false }).limit(2000),
-      supabase.from("expenses").select("id, card_id, description, amount, expense_date, paid_by, created_at").not("card_id", "is", null).limit(5000),
-      supabase.from("expense_splits").select("expense_id, participant_id, amount").limit(20000),
-    ]);
-    if (sp.data) setSplits(sp.data as CardExpenseSplit[]);
-    if (d.data) setDeposits(d.data as DepositRow[]);
-    if (x.data) setCardExpenses(x.data as CardExpenseRow[]);
-    if (c.data) setCards(c.data as Card[]);
-    if (p.data) setPurchases(p.data as Purchase[]);
-    if (s.data) setShares(s.data as Share[]);
-    if (i.data) setInstallments(i.data as Installment[]);
-  }, [supabase]);
+  const refetch = useCallback(() => queryClient.invalidateQueries({ queryKey: tarjetasKey(householdId) }), [queryClient, householdId]);
 
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
@@ -298,18 +292,27 @@ export function CardsView({
   const detailShares = shares.filter((s) => s.purchase_id === detailId);
 
   // ---------- Acciones ----------
-  async function setPaid(inst: Installment, value: boolean | null) {
-    const previous = installments;
-    setInstallments((prev) => prev.map((i) => (i.id === inst.id ? { ...i, manual_paid: value } : i)));
-    const { error } = await supabase.from("card_installments").update({ manual_paid: value }).eq("id", inst.id);
-    if (error) setInstallments(previous);
+  const write = useMutation({
+    mutationFn: async (run: () => PromiseLike<{ error: { message: string } | null }>) => {
+      const { error } = await run();
+      if (error) throw new Error(error.message);
+    },
+    meta: { errorMessage: "No se pudo guardar el cambio." },
+    // Si falla, se vuelve a pedir lo que había para deshacer el cambio en pantalla.
+    onError: () => {
+      refetch();
+    },
+  });
+
+  function setPaid(inst: Installment, value: boolean | null) {
+    patch((d) => ({ installments: d.installments.map((i) => (i.id === inst.id ? { ...i, manual_paid: value } : i)) }));
+    write.mutate(() => supabase.from("card_installments").update({ manual_paid: value }).eq("id", inst.id));
   }
 
-  async function removePurchase(purchase: Purchase) {
+  function removePurchase(purchase: Purchase) {
     setDetailId(null);
-    setPurchases((prev) => prev.filter((p) => p.id !== purchase.id));
-    const { error } = await supabase.from("card_purchases").delete().eq("id", purchase.id);
-    if (error) refetch();
+    patch((d) => ({ purchases: d.purchases.filter((p) => p.id !== purchase.id) }));
+    write.mutate(() => supabase.from("card_purchases").delete().eq("id", purchase.id));
   }
 
   function showNotice(text: string, link = false) {
@@ -338,18 +341,17 @@ export function CardsView({
     setSending(false);
     if (!result.ok) return setSendMessage(result.message);
     setSendInstallmentId(null);
-    refetch();
+    // La cuota pasó a Gastos por una acción del servidor: se actualizan todas las pantallas.
+    queryClient.invalidateQueries();
     showNotice(`Listo: la cuota ${installment?.number ?? ""} ya está en Gastos compartidos.`, true);
   }
 
   const onCardSaved = () => {
     setCardSheet({ open: false, card: null });
     setCardFilter(null);
-    refetch();
   };
   const onPurchaseSaved = () => {
     setPurchaseOpen(false);
-    refetch();
   };
 
   const purchasesOfCard = (id: string) => purchases.filter((p) => p.card_id === id).length;
@@ -369,6 +371,7 @@ export function CardsView({
         }
       />
       <GastosTabs active="tarjetas" />
+      {isError && <QueryErrorBanner onRetry={refetch} retrying={isFetching} />}
 
       {/* Tarjetas */}
       {cards.length === 0 ? (
@@ -628,11 +631,10 @@ export function CardsView({
         cardName={cards.find((c) => c.id === deposits.find((d) => d.id === depositDetailId)?.card_id)?.name ?? "una tarjeta"}
         by={nameOf(deposits.find((d) => d.id === depositDetailId)?.deposited_by ?? "")}
         onClose={() => setDepositDetailId(null)}
-        onDelete={async (deposit) => {
+        onDelete={(deposit) => {
           setDepositDetailId(null);
-          setDeposits((prev) => prev.filter((d) => d.id !== deposit.id));
-          const { error } = await supabase.from("card_deposits").delete().eq("id", deposit.id);
-          if (error) refetch();
+          patch((d) => ({ deposits: d.deposits.filter((x) => x.id !== deposit.id) }));
+          write.mutate(() => supabase.from("card_deposits").delete().eq("id", deposit.id));
         }}
       />
 
@@ -644,10 +646,7 @@ export function CardsView({
         people={people}
         meId={userId}
         householdId={householdId}
-        onSaved={() => {
-          setDepositOpen(false);
-          refetch();
-        }}
+        onSaved={() => setDepositOpen(false)}
       />
 
       <PurchaseDetail
