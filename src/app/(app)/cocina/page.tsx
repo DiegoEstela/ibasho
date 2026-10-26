@@ -1,10 +1,10 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Clock, Heart, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { createClient } from "@/lib/supabase/server";
-import { difficultyLabel } from "@/lib/cocina/labels";
+import { RecipeBrowser } from "./RecipeBrowser";
 
 async function RecipeList() {
   const supabase = await createClient();
@@ -28,47 +28,14 @@ async function RecipeList() {
     );
   }
 
-  return (
-    <ul className="mt-3 grid gap-2.5 sm:grid-cols-2 lg:mt-6 lg:gap-3 xl:grid-cols-3">
-      {recipes.map((r) => (
-        <li key={r.id}>
-          <Link
-            href={`/cocina/${r.id}`}
-            className="block rounded-2xl border border-line bg-surface p-3 transition active:scale-[0.99] lg:p-4"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <h2 className="font-display text-base font-bold leading-snug lg:text-lg">{r.name}</h2>
-              {r.is_favorite && <Heart size={18} className="shrink-0 fill-hanko text-hanko" />}
-            </div>
-            <p className="mt-1.5 flex items-center gap-3 text-xs text-ink-soft lg:mt-2 lg:text-sm">
-              {r.prep_minutes != null && (
-                <span className="flex items-center gap-1">
-                  <Clock size={14} /> {r.prep_minutes} min
-                </span>
-              )}
-              <span>{difficultyLabel(r.difficulty)}</span>
-            </p>
-            {r.tags.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {r.tags.map((t: string) => (
-                  <span key={t} className="rounded-full bg-moss/15 px-2.5 py-0.5 text-xs text-forest">
-                    {t}
-                  </span>
-                ))}
-              </div>
-            )}
-          </Link>
-        </li>
-      ))}
-    </ul>
-  );
+  return <RecipeBrowser recipes={recipes} />;
 }
 
 export default function CocinaPage() {
   return (
     <section>
       <PageHeader
-        title="Cocina"
+        title="Recetas"
         actions={
           <Link
             href="/cocina/nueva"

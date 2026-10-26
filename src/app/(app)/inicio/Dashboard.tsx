@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { Bell, Check, Minus, Pencil, Plus, Share2 } from "lucide-react";
+import { Bell, Check, Minus, Pencil, Plus, Share2, Trash2, X } from "lucide-react";
 import { ShareCode } from "@/components/onboarding/ShareCode";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -87,6 +87,36 @@ function markSeen(at: number) {
   seenListeners.forEach((listener) => listener());
 }
 
+// Novedades que ya se borraron en este dispositivo (se guardan sus claves).
+const DISMISSED_KEY = "ibasho.avisos.borrados";
+const dismissedListeners = new Set<() => void>();
+let dismissedInMemory: string | null = null;
+
+function subscribeDismissed(callback: () => void) {
+  dismissedListeners.add(callback);
+  return () => dismissedListeners.delete(callback);
+}
+
+function getDismissed(): string {
+  if (dismissedInMemory !== null) return dismissedInMemory;
+  try {
+    return localStorage.getItem(DISMISSED_KEY) ?? "[]";
+  } catch {
+    return "[]";
+  }
+}
+
+function setDismissed(keys: string[]) {
+  // Solo se recuerdan las últimas, para que la lista no crezca sin fin.
+  dismissedInMemory = JSON.stringify(keys.slice(-200));
+  try {
+    localStorage.setItem(DISMISSED_KEY, dismissedInMemory);
+  } catch {
+    // Ignorar: borrar es una comodidad del navegador.
+  }
+  dismissedListeners.forEach((listener) => listener());
+}
+
 const colorOf = (key: string) => `var(--${key})`;
 const tint = (key: string, percent = 16) => `color-mix(in srgb, ${colorOf(key)} ${percent}%, var(--surface))`;
 
@@ -131,8 +161,22 @@ export function Dashboard({
     return list.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 30);
   }, [recentItems, userId, now]);
 
-  const unread = events.filter((e) => new Date(e.at).getTime() > seen).length;
+  const dismissedRaw = useSyncExternalStore(subscribeDismissed, getDismissed, () => "[]");
+  const dismissed = useMemo<string[]>(() => {
+    try {
+      const parsed = JSON.parse(dismissedRaw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }, [dismissedRaw]);
+  const visibleEvents = useMemo(() => events.filter((e) => !dismissed.includes(e.key)), [events, dismissed]);
+
+  const unread = visibleEvents.filter((e) => new Date(e.at).getTime() > seen).length;
   const member = (id: string) => members.find((m) => m.id === id);
+
+  const dismissEvent = (key: string) => setDismissed([...dismissed, key]);
+  const dismissAll = () => setDismissed([...dismissed, ...visibleEvents.map((e) => e.key)]);
 
   function openAvisos() {
     setSeenAtOpen(seen);
@@ -215,17 +259,23 @@ export function Dashboard({
 
       {/* Novedades */}
       <BottomSheet open={sheet === "avisos"} onClose={() => setSheet(null)} title="Novedades">
-        {events.length === 0 ? (
+        {visibleEvents.length === 0 ? (
           <div className="py-6 text-center">
             <Bell className="mx-auto text-ink-soft" size={32} strokeWidth={1.5} />
             <p className="mt-3 font-display text-lg font-bold">Todo tranquilo</p>
             <p className="mt-1 text-sm text-ink-soft">
-              Cuando tu pareja agregue o compre algo de la lista, lo verás aquí. Los avisos al teléfono llegarán más adelante.
+              Cuando tu pareja agregue o compre algo de la lista, lo verás aquí.
             </p>
           </div>
         ) : (
+          <>
+          <div className="mb-2 flex justify-end">
+            <button onClick={dismissAll} className="flex min-h-9 items-center gap-1.5 px-2 text-sm text-hanko">
+              <Trash2 size={15} /> Borrar todas
+            </button>
+          </div>
           <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
-            {events.map((e) => {
+            {visibleEvents.map((e) => {
               const who = member(e.memberId);
               const isNew = new Date(e.at).getTime() > seenAtOpen;
               return (
@@ -245,10 +295,18 @@ export function Dashboard({
                     </p>
                   </div>
                   {isNew && <span className="size-2 shrink-0 rounded-full bg-hanko" aria-label="Nuevo" />}
+                  <button
+                    onClick={() => dismissEvent(e.key)}
+                    aria-label="Borrar esta novedad"
+                    className="-mr-2 flex size-9 shrink-0 items-center justify-center rounded-full text-ink-soft transition active:scale-90"
+                  >
+                    <X size={16} />
+                  </button>
                 </li>
               );
             })}
           </ul>
+          </>
         )}
       </BottomSheet>
 

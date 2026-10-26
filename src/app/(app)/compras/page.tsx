@@ -11,7 +11,7 @@ async function Compras() {
   const [{ user, household }, { data: items }, { data: products }, { data: profiles }, { data: categories }] = await Promise.all([
     requireHousehold(),
     supabase.from("shopping_items").select("*").order("created_at", { ascending: false }).limit(500),
-    supabase.from("products").select("id, name, category").order("name").limit(1000),
+    supabase.from("products").select("id, name, category, in_stock").order("name").limit(1000),
     supabase.from("profiles").select("id, display_name, color"),
     supabase.from("shopping_categories").select("id, name, icon, color, position").order("position"),
   ]);

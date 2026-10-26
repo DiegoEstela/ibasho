@@ -2,26 +2,47 @@ import { Suspense } from "react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { notFound } from "next/navigation";
-import { Clock, Heart, Trash2, Users } from "lucide-react";
+import Link from "next/link";
+import { Clock, Heart, Pencil, Trash2, Users } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import { requireHousehold } from "@/lib/household";
 import { difficultyLabel } from "@/lib/cocina/labels";
 import { formatQuantity } from "@/lib/cocina/parse";
 import { deleteRecipe, toggleFavorite } from "../actions";
+import { MissingIngredients, type RecipeIngredient } from "./MissingIngredients";
 
 async function Recipe({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: recipe } = await supabase
+  const [{ household, displayName }, { data: pending }, { data: recipe }] = await Promise.all([
+    requireHousehold(),
+    supabase.from("shopping_items").select("name").eq("done", false).limit(500),
+    supabase
     .from("recipes")
     .select(
-      "id, name, servings, prep_minutes, difficulty, tags, notes, is_favorite, recipe_ingredients(id, name, quantity, unit, position), recipe_steps(id, body, position)",
+      "id, name, servings, prep_minutes, difficulty, tags, notes, is_favorite, recipe_ingredients(id, name, quantity, unit, position, product_id, products(in_stock, category)), recipe_steps(id, body, position)",
     )
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle(),
+  ]);
   if (!recipe) notFound();
 
   const ingredients = [...recipe.recipe_ingredients].sort((a, b) => a.position - b.position);
+  const pendingNames = new Set((pending ?? []).map((i) => i.name.trim().toLowerCase()));
+  const checks: RecipeIngredient[] = ingredients.map((i) => {
+    const product = Array.isArray(i.products) ? i.products[0] : i.products;
+    return {
+    id: i.id,
+    name: i.name,
+    quantity: i.quantity,
+    unit: i.unit,
+    product_id: i.product_id,
+    inStock: product?.in_stock ?? false,
+    category: product?.category ?? null,
+    inList: pendingNames.has(i.name.trim().toLowerCase()),
+    };
+  });
   const steps = [...recipe.recipe_steps].sort((a, b) => a.position - b.position);
 
   return (
@@ -30,6 +51,14 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
         title={recipe.name}
         back="/cocina"
         actions={
+          <div className="flex items-center gap-2">
+          <Link
+            href={`/cocina/${recipe.id}/editar`}
+            aria-label="Editar receta"
+            className="flex size-10 items-center justify-center rounded-full border border-line bg-surface text-ink-soft transition active:scale-90"
+          >
+            <Pencil size={17} />
+          </Link>
           <form action={toggleFavorite}>
             <input type="hidden" name="id" value={recipe.id} />
             <input type="hidden" name="favorite" value={String(!recipe.is_favorite)} />
@@ -40,6 +69,7 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
               <Heart size={18} className={recipe.is_favorite ? "fill-hanko text-hanko" : "text-ink-soft"} />
             </button>
           </form>
+          </div>
         }
       />
 
@@ -50,6 +80,8 @@ async function Recipe({ params }: { params: Promise<{ id: string }> }) {
         )}
         <span>{difficultyLabel(recipe.difficulty)}</span>
       </p>
+
+      <MissingIngredients householdId={household.id} meName={displayName} ingredients={checks} />
 
       {recipe.tags.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">

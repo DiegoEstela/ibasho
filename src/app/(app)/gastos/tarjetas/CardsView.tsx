@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { colorFor } from "@/lib/compras/icons";
 import { formatEUR, toCents } from "@/lib/gastos/money";
 import { createClient } from "@/lib/supabase/client";
-import { debitBalanceCents, type CardExpenseRow, type DepositRow } from "@/lib/tarjetas/debit";
+import { debitBalanceCents, type CardExpenseRow, type CardExpenseSplit, type DepositRow } from "@/lib/tarjetas/debit";
 import { isInstallmentPaid, projectByMonth, type InstallmentRow } from "@/lib/tarjetas/installments";
 import { personCents, purchaseStats, type PurchaseStats } from "@/lib/tarjetas/summary";
 import { formatDate } from "../types";
@@ -37,6 +37,10 @@ type Props = {
   initialCardExpenses: CardExpenseRow[];
   /** Nombre de cada participante de gastos por su id, para mostrar quién pagó. */
   participantNames: Record<string, string>;
+  /** Cuánto le toca a cada participante de los gastos pagados con tarjeta. */
+  initialSplits: CardExpenseSplit[];
+  /** Usuario de cada participante de gastos, para saber de quién es cada parte. */
+  participantUsers: Record<string, string>;
 };
 
 const todayISO = () => {
@@ -62,6 +66,8 @@ export function CardsView({
   initialDeposits,
   initialCardExpenses,
   participantNames,
+  initialSplits,
+  participantUsers,
 }: Props) {
   const [supabase] = useState(() => createClient());
   const [today] = useState(todayISO);
@@ -73,6 +79,7 @@ export function CardsView({
   const [installments, setInstallments] = useState(initialInstallments);
   const [deposits, setDeposits] = useState(initialDeposits);
   const [cardExpenses, setCardExpenses] = useState(initialCardExpenses);
+  const [splits, setSplits] = useState(initialSplits);
   const [depositOpen, setDepositOpen] = useState(false);
   const [depositDetailId, setDepositDetailId] = useState<string | null>(null);
 
@@ -95,14 +102,16 @@ export function CardsView({
 
   // ---------- Sincronización ----------
   const refetch = useCallback(async () => {
-    const [c, p, s, i, d, x] = await Promise.all([
+    const [c, p, s, i, d, x, sp] = await Promise.all([
       supabase.from("cards").select("*").eq("archived", false).order("created_at"),
       supabase.from("card_purchases").select("*").order("purchase_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
       supabase.from("card_purchase_shares").select("purchase_id, user_id, percent").limit(5000),
       supabase.from("card_installments").select("id, purchase_id, number, due_date, amount, manual_paid, expense_id").limit(20000),
       supabase.from("card_deposits").select("*").order("deposit_date", { ascending: false }).limit(2000),
       supabase.from("expenses").select("id, card_id, description, amount, expense_date, paid_by, created_at").not("card_id", "is", null).limit(5000),
+      supabase.from("expense_splits").select("expense_id, participant_id, amount").limit(20000),
     ]);
+    if (sp.data) setSplits(sp.data as CardExpenseSplit[]);
     if (d.data) setDeposits(d.data as DepositRow[]);
     if (x.data) setCardExpenses(x.data as CardExpenseRow[]);
     if (c.data) setCards(c.data as Card[]);
@@ -178,11 +187,45 @@ export function CardsView({
     [purchases, cardFilter, person, sharesByPurchase],
   );
 
+  /**
+   * Gastos sueltos pagados con una tarjeta de crédito (los de Gastos compartidos con «Pagado con»).
+   * Las cuotas y compras enviadas a Gastos no entran: ya cuentan como cuotas.
+   */
+  const creditExpensesAll = useMemo(() => {
+    const linked = new Set<string>();
+    for (const i of installments) if (i.expense_id) linked.add(i.expense_id);
+    for (const p of purchases) if (p.expense_id) linked.add(p.expense_id);
+    return cardExpenses
+      .filter((e) => !linked.has(e.id) && cards.find((c) => c.id === e.card_id)?.kind === "credit")
+      .sort((a, b) => b.expense_date.localeCompare(a.expense_date) || b.created_at.localeCompare(a.created_at));
+  }, [cardExpenses, cards, installments, purchases]);
+
+  const splitsByExpense = useMemo(() => {
+    const map = new Map<string, CardExpenseSplit[]>();
+    for (const s of splits) map.set(s.expense_id, [...(map.get(s.expense_id) ?? []), s]);
+    return map;
+  }, [splits]);
+
+  /** Lo que un gasto suma al total: entero, o solo la parte de la persona elegida. */
+  const expenseCents = useCallback(
+    (e: CardExpenseRow, personId: string) =>
+      personId
+        ? (splitsByExpense.get(e.id) ?? []).reduce((sum, s) => (participantUsers[s.participant_id] === personId ? sum + toCents(Number(s.amount)) : sum), 0)
+        : toCents(Number(e.amount)),
+    [splitsByExpense, participantUsers],
+  );
+
+  const creditExpenses = useMemo(
+    () => creditExpensesAll.filter((e) => (!cardFilter || e.card_id === cardFilter) && expenseCents(e, person) > 0),
+    [creditExpensesAll, cardFilter, person, expenseCents],
+  );
+
   const pendingByCard = useMemo(() => {
     const map = new Map<string, number>();
     for (const p of purchases) map.set(p.card_id, (map.get(p.card_id) ?? 0) + pendingOf(p.id, person));
+    for (const e of creditExpensesAll) if (e.card_id) map.set(e.card_id, (map.get(e.card_id) ?? 0) + expenseCents(e, person));
     return map;
-  }, [purchases, pendingOf, person]);
+  }, [purchases, pendingOf, person, creditExpensesAll, expenseCents]);
 
   const nextDueByCard = useMemo(() => {
     const map = new Map<string, string>();
@@ -207,7 +250,8 @@ export function CardsView({
         )
       : (pendingByCard.get(card.id) ?? 0);
 
-  const totalPending = visiblePurchases.reduce((s, p) => s + pendingOf(p.id, person), 0);
+  const expensesTotal = creditExpenses.reduce((s, e) => s + expenseCents(e, person), 0);
+  const totalPending = visiblePurchases.reduce((s, p) => s + pendingOf(p.id, person), 0) + expensesTotal;
   const activePurchases = visiblePurchases.filter((p) => (statsByPurchase.get(p.id)?.remaining ?? 0) > 0).length;
 
   const pendingByPerson = useMemo(
@@ -216,9 +260,10 @@ export function CardsView({
         person: p,
         cents: purchases
           .filter((x) => !cardFilter || x.card_id === cardFilter)
-          .reduce((s, x) => s + pendingOf(x.id, p.id), 0),
+          .reduce((s, x) => s + pendingOf(x.id, p.id), 0) +
+          creditExpensesAll.filter((e) => !cardFilter || e.card_id === cardFilter).reduce((s, e) => s + expenseCents(e, p.id), 0),
       })),
-    [people, purchases, cardFilter, pendingOf],
+    [people, purchases, cardFilter, pendingOf, creditExpensesAll, expenseCents],
   );
 
   const projectionRows = useMemo<InstallmentRow[]>(() => {
@@ -403,9 +448,14 @@ export function CardsView({
               </p>
               <p className="mt-1 font-display text-3xl font-bold">{formatEUR(totalPending)}</p>
               <p className="text-xs text-ink-soft">
-                {activePurchases === 0
+                {activePurchases === 0 && creditExpenses.length === 0
                   ? "No hay compras con cuotas pendientes"
-                  : `en ${activePurchases} ${activePurchases === 1 ? "compra" : "compras"} con cuotas pendientes`}
+                  : `en ${[
+                      activePurchases > 0 ? `${activePurchases} ${activePurchases === 1 ? "compra" : "compras"} con cuotas pendientes` : null,
+                      creditExpenses.length > 0 ? `${creditExpenses.length} ${creditExpenses.length === 1 ? "gasto" : "gastos"} con la tarjeta` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" y ")}`}
               </p>
 
               {people.length > 1 && pendingByPerson.some((x) => x.cents > 0) && (
@@ -458,7 +508,7 @@ export function CardsView({
                 Compras{cardFilter && cards.find((c) => c.id === cardFilter) ? ` · ${cards.find((c) => c.id === cardFilter)!.name}` : ""}
               </h2>
 
-              {visiblePurchases.length === 0 ? (
+              {visiblePurchases.length === 0 && creditExpenses.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-line bg-surface/60 p-6 text-center">
                   <p className="font-display text-lg font-bold">Aún no hay compras</p>
                   <p className="mt-1 text-sm text-ink-soft">Apunta una compra en cuotas y la app calcula cada vencimiento.</p>
@@ -469,7 +519,7 @@ export function CardsView({
                     Agregar compra
                   </button>
                 </div>
-              ) : (
+              ) : visiblePurchases.length === 0 ? null : (
                 <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
                   {visiblePurchases.map((p) => {
                     const stats = statsByPurchase.get(p.id)!;
@@ -517,6 +567,34 @@ export function CardsView({
                     );
                   })}
                 </ul>
+              )}
+
+              {creditExpenses.length > 0 && (
+                <>
+                  <h2 className="mb-2 mt-5 px-1 font-display text-base font-bold lg:text-lg">Gastos pagados con la tarjeta</h2>
+                  <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+                    {creditExpenses.map((e) => {
+                      const card = cards.find((c) => c.id === e.card_id);
+                      return (
+                        <li key={e.id} className="flex items-center gap-3 px-3 py-2.5">
+                          <span
+                            className="flex size-9 shrink-0 items-center justify-center rounded-xl"
+                            style={{ background: `color-mix(in srgb, ${colorFor(card?.color ?? "forest")} 22%, transparent)`, color: colorFor(card?.color ?? "forest") }}
+                          >
+                            <CreditCard size={18} strokeWidth={1.75} />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[15px]">{e.description}</span>
+                            <span className="block truncate text-xs text-ink-soft">
+                              {[card?.name, formatDate(e.expense_date), e.paid_by ? `pagó ${participantNames[e.paid_by] ?? "alguien"}` : null].filter(Boolean).join(" · ")}
+                            </span>
+                          </span>
+                          <span className="text-[15px] font-medium">{formatEUR(expenseCents(e, person))}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
               )}
             </div>
           </div>

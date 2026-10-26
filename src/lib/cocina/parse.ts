@@ -14,7 +14,7 @@ const UNITS = [
   "loncha", "lonchas", "rama", "ramas", "hoja", "hojas", "lata", "latas", "paquete", "paquetes",
 ];
 
-function toNumber(raw: string): number | null {
+export function toNumber(raw: string): number | null {
   const text = raw.replace(",", ".").trim();
   if (text.includes("/")) {
     const [a, b] = text.split("/").map(Number);

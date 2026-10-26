@@ -72,7 +72,7 @@ const slides = [
         icon={CookingPot}
         tone="terracotta"
         badge="Disponible"
-        title="Cocina"
+        title="Recetas"
         text="Guarden sus recetas y pasen los ingredientes a la lista de compras con un toque."
       />
     ),

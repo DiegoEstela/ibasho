@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Check, ChevronDown, LayoutGrid, List, Pencil, Plus, ShoppingBasket, Trash2 } from "lucide-react";
+import { Check, ChevronDown, House, LayoutGrid, List, Package, Pencil, Plus, ShoppingBasket, Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SwipeRow } from "@/components/ui/SwipeRow";
@@ -31,7 +31,7 @@ export type Item = {
 };
 
 export type Member = { id: string; name: string; color: string };
-export type Product = { id: string; name: string; category: string | null };
+export type Product = { id: string; name: string; category: string | null; in_stock: boolean };
 
 type Props = {
   householdId: string;
@@ -42,13 +42,21 @@ type Props = {
   members: Member[];
 };
 
-type Toast = { text: string; undo?: () => void };
+type Toast = { text: string; undo?: () => void; actionLabel?: string };
 
 const STORES = ["Mercadona", "Consum", "Dia", "Carrefour", "Lidl", "Aldi"];
 const RECENT_DONE_DAYS = 3;
 const VIEW_KEY = "ibasho.compras.vista";
 
 type View = "lista" | "categorias";
+
+// Las tres partes del módulo.
+type Tab = "alacena" | "casa" | "compra";
+const TABS = [
+  ["compra", "Lista de compras", "Lo que falta comprar", ShoppingBasket],
+  ["casa", "Casa", "Lo que tienen ahora en casa", House],
+  ["alacena", "Lista de productos", "Todos los productos que conocen", Package],
+] as const;
 
 // La vista elegida se recuerda en el navegador; sin almacenamiento, solo mientras dure la sesión.
 const viewListeners = new Set<() => void>();
@@ -99,6 +107,8 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   const [customCats, setCustomCats] = useState<CustomCategoryRow[]>(initialCategories);
   const view = useSyncExternalStore(subscribeView, getView, () => "lista" as View);
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("compra");
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [catSheet, setCatSheet] = useState<{ open: boolean; cat: Cat | null }>({ open: false, cat: null });
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -118,6 +128,12 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   function changeView(next: View) {
     setStoredView(next);
     setSelectedCat(null);
+  }
+
+  function changeTab(next: Tab) {
+    setTab(next);
+    setSelectedCat(null);
+    setText("");
   }
 
   // ---------- Tiempo real ----------
@@ -169,6 +185,19 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
           setCustomCats((prev) => prev.map((c) => (c.id === row.id ? row : c)));
         },
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "products", filter: `household_id=eq.${householdId}` },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            const id = (payload.old as { id?: string }).id;
+            if (id) setProducts((prev) => Object.fromEntries(Object.entries(prev).filter(([, p]) => p.id !== id)));
+            return;
+          }
+          const row = payload.new as Product;
+          setProducts((prev) => ({ ...prev, [key(row.name)]: { id: row.id, name: row.name, category: row.category, in_stock: row.in_stock } }));
+        },
+      )
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "shopping_categories" }, (payload) => {
         const id = (payload.old as { id?: string }).id;
         if (id) setCustomCats((prev) => prev.filter((c) => c.id !== id));
@@ -192,16 +221,32 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   }, [supabase, householdId, refetch]);
 
   // ---------- Acciones ----------
-  async function addByName(raw: string, forcedCategory?: string | null) {
-    const parsed = parseIngredient(raw);
-    if (!parsed) return;
+  function patchProduct(p: Product, patch: Partial<Product>) {
+    setProducts((prev) => ({ ...prev, [key(p.name)]: { ...p, ...patch } }));
+  }
 
-    const name = capitalize(parsed.name);
-    const quantity = formatQuantity(parsed.quantity, parsed.unit) || null;
+  /** Crea el producto si no existía (si ya estaba, queda como está) y lo devuelve. */
+  async function ensureProduct(name: string, category: string, extra: Partial<Pick<Product, "in_stock">> = {}) {
+    const k = key(name);
+    await supabase
+      .from("products")
+      .upsert({ household_id: householdId, name, category, ...extra }, { onConflict: "household_id,name_key", ignoreDuplicates: true });
+    const { data: product } = await supabase
+      .from("products")
+      .select("id, name, category, in_stock")
+      .eq("household_id", householdId)
+      .eq("name_key", k)
+      .maybeSingle();
+    if (product) setProducts((prev) => ({ ...prev, [k]: product as Product }));
+    return (product as Product | null) ?? null;
+  }
+
+  /** Pone un producto en la lista de la próxima compra; lo que está en la lista es lo que falta en casa. */
+  async function addToList(name: string, quantity: string | null, forcedCategory?: string | null, silent = false) {
     const k = key(name);
 
     if (items.some((i) => !i.done && key(i.name) === k)) {
-      flash({ text: `«${name}» ya está en la lista` });
+      if (!silent) flash({ text: `«${name}» ya está en la lista` });
       return;
     }
 
@@ -223,27 +268,19 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     };
     setItems((prev) => [temp, ...prev]);
 
-    let productId = known?.id ?? null;
+    let productId: string | null = known?.id ?? null;
     if (!known) {
-      await supabase
-        .from("products")
-        .upsert({ household_id: householdId, name, category }, { onConflict: "household_id,name_key", ignoreDuplicates: true });
-      const { data: product } = await supabase
-        .from("products")
-        .select("id, name, category")
-        .eq("household_id", householdId)
-        .eq("name_key", k)
-        .maybeSingle();
-      if (product) {
-        productId = product.id;
-        setProducts((prev) => ({ ...prev, [k]: product }));
+      const product = await ensureProduct(name, category, { in_stock: false });
+      productId = product?.id ?? null;
+    } else {
+      const patch: Partial<Product> = {};
+      if (known.in_stock) patch.in_stock = false;
+      // Si se eligió una categoría a mano, el producto la recuerda para la próxima vez.
+      if (forcedCategory && known.category !== forcedCategory) patch.category = forcedCategory;
+      if (Object.keys(patch).length) {
+        patchProduct(known, patch);
+        await supabase.from("products").update(patch).eq("id", known.id);
       }
-    }
-
-    // Si se eligió una categoría a mano, el producto la recuerda para la próxima vez.
-    if (forcedCategory && known && known.category !== forcedCategory) {
-      await supabase.from("products").update({ category: forcedCategory }).eq("id", known.id);
-      setProducts((prev) => ({ ...prev, [k]: { ...known, category: forcedCategory } }));
     }
 
     const { data, error } = await supabase
@@ -263,6 +300,90 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     notifyPartner({ kind: "compras", title: "Lista de compras", body: `${profile.name || "Tu pareja"} agregó «${name}»`, url: "/compras" });
   }
 
+  async function addByName(raw: string, forcedCategory?: string | null) {
+    const parsed = parseIngredient(raw);
+    if (!parsed) return;
+    await addToList(capitalize(parsed.name), formatQuantity(parsed.quantity, parsed.unit) || null, forcedCategory);
+  }
+
+  /** Marca si un producto está en casa o falta. Lo que falta pasa a la lista; lo que ya hay sale de ella. */
+  async function setStock(product: Product, inStock: boolean) {
+    if (product.in_stock === inStock) return;
+    patchProduct(product, { in_stock: inStock });
+    const { error } = await supabase.from("products").update({ in_stock: inStock }).eq("id", product.id);
+    if (error) {
+      patchProduct(product, { in_stock: product.in_stock });
+      flash({ text: "No se pudo actualizar. Revisa tu conexión." });
+      return;
+    }
+    if (!inStock) {
+      await addToList(capitalize(product.name), null, null, true);
+      return;
+    }
+    const pendingOnes = items.filter((i) => !i.done && !i.id.startsWith("tmp-") && (i.product_id === product.id || key(i.name) === key(product.name)));
+    if (pendingOnes.length === 0) return;
+    setItems((prev) => prev.filter((i) => !pendingOnes.some((p) => p.id === i.id)));
+    await supabase.from("shopping_items").delete().in("id", pendingOnes.map((i) => i.id));
+  }
+
+  /** Añade un producto nuevo: a la alacena (solo se conoce) o a casa (ya lo tienen). */
+  async function addProduct(raw: string, mode: "alacena" | "casa") {
+    const name = capitalize(raw.trim());
+    if (!name) return;
+    const known = products[key(name)];
+    if (known) {
+      if (mode === "casa" && !known.in_stock) {
+        await setStock(known, true);
+        flash({ text: `«${capitalize(known.name)}» está en casa` });
+      } else {
+        flash({ text: `«${capitalize(known.name)}» ya está` });
+      }
+      return;
+    }
+    const category = selectedCat ?? classify(name);
+    const created = await ensureProduct(name, category, { in_stock: mode === "casa" });
+    if (!created) flash({ text: "No se pudo añadir. Revisa tu conexión." });
+  }
+
+  /** «Se acabó»: sale de casa y se ofrece comprarlo de nuevo. */
+  async function finish(product: Product) {
+    patchProduct(product, { in_stock: false });
+    const { error } = await supabase.from("products").update({ in_stock: false }).eq("id", product.id);
+    if (error) {
+      patchProduct(product, { in_stock: product.in_stock });
+      flash({ text: "No se pudo actualizar. Revisa tu conexión." });
+      return;
+    }
+    flash({
+      text: `Se acabó «${capitalize(product.name)}»`,
+      actionLabel: "Comprar de nuevo",
+      undo: () => {
+        setToast(null);
+        addToList(capitalize(product.name), null, null, true);
+      },
+    });
+  }
+
+  async function saveProduct(product: Product, patch: { category: string }) {
+    setEditingProduct(null);
+    patchProduct(product, patch);
+    const { error } = await supabase.from("products").update(patch).eq("id", product.id);
+    if (error) {
+      patchProduct(product, product);
+      flash({ text: "No se pudo guardar." });
+    }
+  }
+
+  async function deleteProduct(product: Product) {
+    setEditingProduct(null);
+    setProducts((prev) => Object.fromEntries(Object.entries(prev).filter(([, p]) => p.id !== product.id)));
+    const { error } = await supabase.from("products").delete().eq("id", product.id);
+    if (error) {
+      patchProduct(product, product);
+      flash({ text: "No se pudo quitar." });
+    }
+  }
+
   async function toggle(item: Item) {
     if (item.id.startsWith("tmp-")) return;
     const done = !item.done;
@@ -277,6 +398,14 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     if (error) {
       setItems((prev) => prev.map((i) => (i.id === item.id ? item : i)));
       flash({ text: "No se pudo actualizar. Revisa tu conexión." });
+      return;
+    }
+    // Lo comprado ya está en casa; si se devuelve a la lista, vuelve a faltar.
+    const product = Object.values(products).find((p) => p.id === item.product_id);
+    if (product && product.in_stock === done) return;
+    if (product) {
+      patchProduct(product, { in_stock: done });
+      await supabase.from("products").update({ in_stock: done }).eq("id", product.id);
     }
   }
 
@@ -385,6 +514,30 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   const catByName = useMemo(() => new Map(allCats.map((c) => [c.name, c])), [allCats]);
   const metaOf = (name: string): Cat => catByName.get(name) ?? allCats[allCats.length - 1];
   const pending = useMemo(() => items.filter((i) => !i.done), [items]);
+  const pendingKeys = useMemo(() => new Set(pending.map((i) => key(i.name))), [pending]);
+  const productList = useMemo(() => Object.values(products).sort((a, b) => a.name.localeCompare(b.name, "es")), [products]);
+  const atHome = useMemo(() => productList.filter((p) => p.in_stock), [productList]);
+  const catOrder = useCallback(
+    (c: string) => {
+      const n = allCats.findIndex((x) => x.name === c);
+      return n === -1 ? allCats.length : n;
+    },
+    [allCats],
+  );
+
+  /** Productos de la alacena o de casa, filtrados por lo escrito y por la categoría elegida, y agrupados por categoría. */
+  const groupedProducts = useMemo(() => {
+    const q = key(text);
+    const source = tab === "casa" ? atHome : productList;
+    const groups = new Map<string, Product[]>();
+    for (const p of source) {
+      const category = p.category ?? "Otros";
+      if (selectedCat && category !== selectedCat) continue;
+      if (q && !key(p.name).includes(q)) continue;
+      groups.set(category, [...(groups.get(category) ?? []), p]);
+    }
+    return [...groups.entries()].sort((a, b) => catOrder(a[0]) - catOrder(b[0]));
+  }, [tab, atHome, productList, selectedCat, text, catOrder]);
 
   const grouped = useMemo(() => {
     const groups = new Map<string, Item[]>();
@@ -393,23 +546,27 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
       list.push(item);
       groups.set(item.category, list);
     }
-    const order = (c: string) => {
-      const n = allCats.findIndex((x) => x.name === c);
-      return n === -1 ? allCats.length : n;
-    };
-    return [...groups.entries()].sort((a, b) => order(a[0]) - order(b[0]));
-  }, [pending, allCats]);
+    return [...groups.entries()].sort((a, b) => catOrder(a[0]) - catOrder(b[0]));
+  }, [pending, catOrder]);
 
   const visibleGroups = useMemo(
     () => (selectedCat ? grouped.filter(([c]) => c === selectedCat) : grouped),
     [grouped, selectedCat],
   );
 
+  // El número de cada categoría cuenta lo que falta (compra), lo que hay en casa (casa) o todo lo conocido (alacena).
   const counts = useMemo(() => {
     const result: Record<string, number> = {};
-    for (const i of pending) result[i.category] = (result[i.category] ?? 0) + 1;
+    if (tab === "compra") {
+      for (const i of pending) result[i.category] = (result[i.category] ?? 0) + 1;
+    } else {
+      for (const p of tab === "casa" ? atHome : productList) {
+        const c = p.category ?? "Otros";
+        result[c] = (result[c] ?? 0) + 1;
+      }
+    }
     return result;
-  }, [pending]);
+  }, [tab, pending, atHome, productList]);
 
   const recentDone = useMemo(() => {
     const limit = now - RECENT_DONE_DAYS * 86400_000;
@@ -419,8 +576,14 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   }, [items, now]);
 
   const suggestions = useMemo(() => {
-    const pendingKeys = new Set(pending.map((i) => key(i.name)));
     const q = key(text);
+
+    // En «Casa», al escribir se ofrecen los productos conocidos que aún no están en casa.
+    if (tab === "casa") {
+      if (!q) return [];
+      return productList.filter((p) => !p.in_stock && key(p.name).includes(q)).slice(0, 6).map((p) => capitalize(p.name));
+    }
+    if (tab === "alacena") return [];
 
     if (q) {
       const names = Object.values(products).map((p) => capitalize(p.name));
@@ -440,59 +603,106 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
       .sort((a, b) => b[1].n - a[1].n)
       .slice(0, 8)
       .map(([, v]) => v.name);
-  }, [text, products, items, pending]);
+  }, [tab, text, products, productList, items, pendingKeys]);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const value = text.trim();
     if (!value) return;
     setText("");
-    addByName(value, view === "categorias" ? selectedCat : null);
+    if (tab === "compra") addByName(value, view === "categorias" ? selectedCat : null);
+    else addProduct(value, tab);
     inputRef.current?.focus();
   }
 
   function pick(name: string) {
     setText("");
-    addByName(name, view === "categorias" ? selectedCat : null);
+    if (tab === "compra") addByName(name, view === "categorias" ? selectedCat : null);
+    else addProduct(name, tab);
   }
+
+  const tabInfo = TABS.find(([value]) => value === tab)!;
+  const subtitle =
+    tab === "compra"
+      ? pending.length === 0
+        ? "Todo comprado"
+        : pending.length === 1
+          ? "Falta 1 producto"
+          : `Faltan ${pending.length} productos`
+      : tab === "alacena"
+        ? productList.length === 1
+          ? "1 producto"
+          : `${productList.length} productos`
+        : atHome.length === 1
+          ? "1 producto en casa"
+          : `${atHome.length} productos en casa`;
+
+  const placeholder =
+    tab === "alacena"
+      ? "Buscar o añadir un producto…"
+      : tab === "casa"
+        ? "Buscar o añadir a lo que hay en casa…"
+        : view === "categorias" && selectedCat
+          ? `Añadir a ${selectedCat}…`
+          : "Añadir… (ej. 2 yogures)";
+
+  const pantryActive = tab !== "compra";
 
   return (
     <section className="max-w-[1500px]">
       <PageHeader
         title="Compras"
         subtitle={
-          <span aria-live="polite">
-            {pending.length === 0
-              ? "Todo comprado"
-              : pending.length === 1
-                ? "Falta 1 producto"
-                : `Faltan ${pending.length} productos`}
-          </span>
+          <span aria-live="polite">{subtitle}</span>
         }
         actions={
-          <div className="flex gap-0.5 rounded-xl bg-washi-deep p-1 lg:hidden" role="tablist" aria-label="Vista">
-            {(
-              [
-                ["lista", "Lista", List],
-                ["categorias", "Categorías", LayoutGrid],
-              ] as const
-            ).map(([value, label, Icon]) => (
-              <button
-                key={value}
-                role="tab"
-                aria-selected={view === value}
-                aria-label={label}
-                onClick={() => changeView(value)}
-                className={`flex size-9 items-center justify-center rounded-lg transition ${
-                  view === value ? "bg-surface text-forest shadow-sm" : "text-ink-soft"
-                }`}
-              >
-                <Icon size={18} />
-              </button>
-            ))}
-          </div>
+          tab === "compra" ? (
+            <div className="flex gap-0.5 rounded-xl bg-washi-deep p-1 lg:hidden" role="tablist" aria-label="Vista">
+              {(
+                [
+                  ["lista", "Lista", List],
+                  ["categorias", "Categorías", LayoutGrid],
+                ] as const
+              ).map(([value, label, Icon]) => (
+                <button
+                  key={value}
+                  role="tab"
+                  aria-selected={view === value}
+                  aria-label={label}
+                  onClick={() => changeView(value)}
+                  className={`flex size-9 items-center justify-center rounded-lg transition ${
+                    view === value ? "bg-surface text-forest shadow-sm" : "text-ink-soft"
+                  }`}
+                >
+                  <Icon size={18} />
+                </button>
+              ))}
+            </div>
+          ) : undefined
         }
       />
+
+      {/* Las tres partes del módulo */}
+      <div className="mb-2 flex w-full gap-1 rounded-xl bg-washi-deep p-1 lg:mb-3 lg:w-fit" role="tablist" aria-label="Secciones de compras">
+        {TABS.map(([value, name, , Icon]) => (
+          <button
+            key={value}
+            role="tab"
+            aria-selected={tab === value}
+            onClick={() => changeTab(value)}
+            className={`flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg px-1.5 text-center text-[13px] leading-tight font-medium transition lg:flex-none lg:gap-2 lg:px-5 lg:text-sm ${
+              tab === value ? "bg-surface text-forest shadow-sm" : "text-ink-soft"
+            }`}
+          >
+            <Icon size={16} />
+            {name}
+            {value === "compra" && pending.length > 0 && (
+              <span className="rounded-full bg-forest/15 px-1.5 text-xs text-forest">{pending.length}</span>
+            )}
+          </button>
+        ))}
+      </div>
+      <p className="mb-1 hidden text-sm text-ink-soft lg:block">{tabInfo[2]}</p>
 
       {/* Campo siempre visible */}
       <div className="sticky top-[env(safe-area-inset-top)] z-10 -mx-4 bg-background/90 px-4 pb-2 pt-1 backdrop-blur lg:-mx-10 lg:px-10 lg:pb-3 lg:pt-4">
@@ -503,11 +713,11 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
             onChange={(e) => setText(e.target.value)}
             onFocus={() => setFocused(true)}
             onBlur={() => setTimeout(() => setFocused(false), 150)}
-            placeholder={view === "categorias" && selectedCat ? `Añadir a ${selectedCat}…` : "Añadir… (ej. 2 yogures)"}
+            placeholder={placeholder}
             enterKeyHint="done"
             autoComplete="off"
             className={field}
-            aria-label="Añadir producto"
+            aria-label={tab === "alacena" ? "Buscar o añadir un producto" : "Añadir producto"}
           />
           <button
             aria-label="Añadir"
@@ -532,11 +742,31 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
             ))}
           </div>
         )}
+
+        {/* Filtro por categoría en el teléfono (productos y casa) */}
+        {pantryActive && (
+          <div className="mt-2 flex gap-2 overflow-x-auto pb-1 lg:hidden" role="group" aria-label="Categorías">
+            {[{ name: null as string | null, label: "Todas" }, ...allCats.filter((c) => (counts[c.name] ?? 0) > 0 || c.name === selectedCat).map((c) => ({ name: c.name as string | null, label: c.name }))].map((c) => (
+              <button
+                key={c.label}
+                onClick={() => setSelectedCat(c.name)}
+                aria-pressed={selectedCat === c.name}
+                className={`flex min-h-8 shrink-0 items-center rounded-full border px-3 text-[13px] transition active:scale-95 ${
+                  selectedCat === c.name ? "border-forest bg-forest text-surface" : "border-line bg-surface text-ink"
+                }`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="mt-1 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_1fr] lg:gap-x-10 xl:grid-cols-[minmax(0,1fr)_26rem]">
-        {/* Mosaico de categorías: pestaña en teléfono, panel lateral en escritorio */}
-        <div className={`${view === "categorias" ? "" : "hidden"} lg:col-start-2 lg:row-start-1 lg:block`}>
+      <div className="mt-1 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-x-10 xl:grid-cols-[minmax(0,1fr)_26rem]">
+        {/* Categorías: en escritorio quedan fijas a la derecha y solo se desplaza la lista */}
+        <div
+          className={`${tab === "compra" && view === "categorias" ? "" : "hidden"} lg:sticky lg:top-24 lg:col-start-2 lg:row-start-1 lg:block lg:max-h-[calc(100dvh-7rem)] lg:overflow-y-auto lg:pb-4`}
+        >
           <h2 className="mb-3 hidden font-display text-xl font-bold lg:block">Categorías</h2>
           <CategoryTiles
             categories={allCats}
@@ -548,7 +778,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
         </div>
 
         {/* Productos de la categoría elegida (solo teléfono) */}
-        {view === "categorias" && (
+        {tab === "compra" && view === "categorias" && (
           <div className="lg:hidden">
             {selectedCat ? (
               <>
@@ -584,8 +814,8 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
           </div>
         )}
 
-        {/* Lista: pestaña en teléfono, zona principal en escritorio */}
-        <div className={`${view === "lista" ? "" : "hidden"} lg:col-start-1 lg:row-span-2 lg:row-start-1 lg:block`}>
+        {/* Zona principal: lo único que se desplaza en escritorio */}
+        <div className={`${tab === "compra" && view === "categorias" ? "hidden lg:block" : ""} lg:col-start-1 lg:row-start-1`}>
           {selectedCat && (
             <div className="mb-4 hidden items-center gap-3 lg:flex">
               <span className="rounded-full bg-forest/15 px-3 py-1 text-sm font-medium text-forest">{selectedCat}</span>
@@ -603,71 +833,111 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
             </div>
           )}
 
-          {visibleGroups.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-line bg-surface/60 p-8 text-center">
-              <ShoppingBasket className="mx-auto text-forest" size={36} strokeWidth={1.5} />
-              <p className="mt-3 font-display text-lg font-bold">
-                {selectedCat ? "No falta nada de esta categoría" : "La lista está vacía"}
-              </p>
-              <p className="mt-1 text-sm text-ink-soft">
-                Escribe arriba lo que falta y aparecerá en el teléfono de tu pareja al instante.
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3 lg:block lg:columns-2 lg:gap-6 2xl:columns-3">
-              {visibleGroups.map(([category, list]) => {
-                const meta = metaOf(category);
-                const Icon = iconFor(meta.icon);
-                return (
-                  <div key={category} className="lg:mb-6 lg:break-inside-avoid">
-                    <h2 className="mb-1 flex items-center gap-1.5 px-2 text-[11px] font-medium uppercase tracking-wider text-ink-soft lg:mb-1.5 lg:gap-2 lg:text-xs">
-                      <Icon size={14} style={{ color: colorFor(meta.color) }} />
-                      {category}
-                    </h2>
-                    <ItemRows list={list} onToggle={toggle} onRemove={remove} onEdit={setEditing} />
-                  </div>
-                );
-              })}
-            </div>
+          {tab === "alacena" && (
+            <ProductGroups
+              groups={groupedProducts}
+              metaOf={metaOf}
+              empty={
+                productList.length === 0
+                  ? { title: "No hay productos todavía", text: "Escribe arriba los productos que compran y quedarán guardados para la próxima vez." }
+                  : { title: "No hay nada que coincida", text: "Prueba con otra palabra o escribe el nombre y pulsa + para añadirlo." }
+              }
+            >
+              {(p) => (
+                <button onClick={() => setEditingProduct(p)} className="flex min-h-12 w-full items-center px-3 py-1.5 text-left">
+                  <span className="truncate text-[15px] leading-snug">{capitalize(p.name)}</span>
+                </button>
+              )}
+            </ProductGroups>
+          )}
+
+          {tab === "casa" && (
+            <ProductGroups
+              groups={groupedProducts}
+              metaOf={metaOf}
+              empty={
+                atHome.length === 0
+                  ? { title: "No hay nada en casa", text: "Lo que marques como comprado llega aquí solo. También puedes escribir arriba lo que ya tienen." }
+                  : { title: "No hay nada que coincida", text: "Prueba con otra palabra." }
+              }
+            >
+              {(p) => (
+                <HomeRow
+                  product={p}
+                  onFinish={() => finish(p)}
+                  onEdit={() => setEditingProduct(p)}
+                />
+              )}
+            </ProductGroups>
+          )}
+
+          {tab === "compra" && (
+            <>
+              {visibleGroups.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-line bg-surface/60 p-8 text-center">
+                  <ShoppingBasket className="mx-auto text-forest" size={36} strokeWidth={1.5} />
+                  <p className="mt-3 font-display text-lg font-bold">
+                    {selectedCat ? "No falta nada de esta categoría" : "La lista está vacía"}
+                  </p>
+                  <p className="mt-1 text-sm text-ink-soft">
+                    Escribe arriba lo que falta y aparecerá en el teléfono de tu pareja al instante.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3 lg:block lg:columns-2 lg:gap-6 2xl:columns-3">
+                  {visibleGroups.map(([category, list]) => {
+                    const meta = metaOf(category);
+                    const Icon = iconFor(meta.icon);
+                    return (
+                      <div key={category} className="lg:mb-6 lg:break-inside-avoid">
+                        <h2 className="mb-1 flex items-center gap-1.5 px-2 text-[11px] font-medium uppercase tracking-wider text-ink-soft lg:mb-1.5 lg:gap-2 lg:text-xs">
+                          <Icon size={14} style={{ color: colorFor(meta.color) }} />
+                          {category}
+                        </h2>
+                        <ItemRows list={list} onToggle={toggle} onRemove={remove} onEdit={setEditing} />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Comprado recientemente */}
+              {recentDone.length > 0 && (
+                <div className="mt-4 lg:mt-8 lg:max-w-xl">
+                  <button
+                    onClick={() => setShowDone((v) => !v)}
+                    aria-expanded={showDone}
+                    className="flex min-h-11 w-full items-center justify-between px-2 text-sm text-ink-soft"
+                  >
+                    <span>Comprado recientemente ({recentDone.length})</span>
+                    <ChevronDown size={18} className={`transition ${showDone ? "rotate-180" : ""}`} />
+                  </button>
+                  <ul className={`${showDone ? "" : "hidden"} divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface`}>
+                    {recentDone.map((item) => (
+                      <li key={item.id} className="flex min-h-12 items-center">
+                        <button
+                          onClick={() => toggle(item)}
+                          aria-label={`Devolver «${item.name}» a la lista`}
+                          className="flex size-12 shrink-0 items-center justify-center"
+                        >
+                          <span className="check-pop flex size-5 items-center justify-center rounded-full bg-forest text-surface">
+                            <Check size={14} strokeWidth={3} />
+                          </span>
+                        </button>
+                        <div className="flex-1 py-1.5 pr-3">
+                          <span className="block text-[15px] text-ink-soft line-through">{item.name}</span>
+                          <span className="block text-[11px] text-ink-soft" suppressHydrationWarning>
+                            {memberName(item.done_by)} · {item.done_at ? timeAgo(item.done_at, now) : ""}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
           )}
         </div>
-
-        {/* Comprado recientemente: siempre visible en escritorio */}
-        {recentDone.length > 0 && (
-          <div className="lg:col-start-2 lg:row-start-2 lg:self-start">
-            <button
-              onClick={() => setShowDone((v) => !v)}
-              aria-expanded={showDone}
-              className="flex min-h-11 w-full items-center justify-between px-2 text-sm text-ink-soft lg:pointer-events-none lg:font-display lg:text-xl lg:font-bold lg:text-ink"
-            >
-              <span>Comprado recientemente ({recentDone.length})</span>
-              <ChevronDown size={18} className={`transition lg:hidden ${showDone ? "rotate-180" : ""}`} />
-            </button>
-            <ul
-              className={`${showDone ? "" : "hidden"} divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface lg:block`}
-            >
-              {recentDone.map((item) => (
-                <li key={item.id} className="flex min-h-12 items-center">
-                  <button
-                    onClick={() => toggle(item)}
-                    aria-label={`Devolver «${item.name}» a la lista`}
-                    className="flex size-12 shrink-0 items-center justify-center"
-                  >
-                    <span className="check-pop flex size-5 items-center justify-center rounded-full bg-forest text-surface">
-                      <Check size={14} strokeWidth={3} />
-                    </span>
-                  </button>
-                  <div className="flex-1 py-1.5 pr-3">
-                    <span className="block text-[15px] text-ink-soft line-through">{item.name}</span>
-                    <span className="block text-[11px] text-ink-soft" suppressHydrationWarning>
-                      {memberName(item.done_by)} · {item.done_at ? timeAgo(item.done_at, now) : ""}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
 
       {/* Aviso con opción de deshacer */}
@@ -678,8 +948,8 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
         >
           <span>{toast.text}</span>
           {toast.undo && (
-            <button onClick={toast.undo} className="min-h-9 font-medium text-sakura">
-              Deshacer
+            <button onClick={toast.undo} className="min-h-9 shrink-0 font-medium text-sakura">
+              {toast.actionLabel ?? "Deshacer"}
             </button>
           )}
         </div>
@@ -704,7 +974,137 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
           remove(item);
         }}
       />
+
+      <ProductSheet
+        categories={allCats.map((c) => c.name)}
+        product={editingProduct}
+        onClose={() => setEditingProduct(null)}
+        onSave={saveProduct}
+        onDelete={deleteProduct}
+      />
     </section>
+  );
+}
+
+/** Productos agrupados por categoría; cada fila la dibuja quien lo usa. */
+function ProductGroups({
+  groups,
+  metaOf,
+  empty,
+  children,
+}: {
+  groups: [string, Product[]][];
+  metaOf: (name: string) => Cat;
+  empty: { title: string; text: string };
+  children: (product: Product) => React.ReactNode;
+}) {
+  if (groups.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-line bg-surface/60 p-8 text-center">
+        <ShoppingBasket className="mx-auto text-forest" size={36} strokeWidth={1.5} />
+        <p className="mt-3 font-display text-lg font-bold">{empty.title}</p>
+        <p className="mt-1 text-sm text-ink-soft">{empty.text}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-3 lg:block lg:columns-2 lg:gap-6 2xl:columns-3">
+      {groups.map(([category, list]) => {
+        const meta = metaOf(category);
+        const Icon = iconFor(meta.icon);
+        return (
+          <div key={category} className="lg:mb-6 lg:break-inside-avoid">
+            <h2 className="mb-1 flex items-center gap-1.5 px-2 text-[11px] font-medium uppercase tracking-wider text-ink-soft lg:mb-1.5 lg:gap-2 lg:text-xs">
+              <Icon size={14} style={{ color: colorFor(meta.color) }} />
+              {category}
+            </h2>
+            <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+              {list.map((p) => (
+                <li key={p.id}>{children(p)}</li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Un producto que hay en casa, con un botón para avisar que se acabó. */
+function HomeRow({ product, onFinish, onEdit }: { product: Product; onFinish: () => void; onEdit: () => void }) {
+  return (
+    <div className="flex min-h-12 items-center gap-2 pl-3 pr-2">
+      <button onClick={onEdit} className="min-h-12 min-w-0 flex-1 py-1.5 text-left">
+        <span className="block truncate text-[15px] leading-snug">{capitalize(product.name)}</span>
+      </button>
+      <button onClick={onFinish} className="min-h-9 shrink-0 rounded-lg px-3 text-[13px] font-medium text-hanko transition active:scale-95">
+        Se acabó
+      </button>
+    </div>
+  );
+}
+
+function ProductSheet({
+  categories,
+  product,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  categories: string[];
+  product: Product | null;
+  onClose: () => void;
+  onSave: (product: Product, patch: { category: string }) => void;
+  onDelete: (product: Product) => void;
+}) {
+  return (
+    <BottomSheet open={!!product} onClose={onClose} title={product ? capitalize(product.name) : "Producto"}>
+      {product && <ProductForm key={product.id} product={product} categories={categories} onSave={onSave} onDelete={onDelete} />}
+    </BottomSheet>
+  );
+}
+
+function ProductForm({
+  product,
+  categories,
+  onSave,
+  onDelete,
+}: {
+  product: Product;
+  categories: string[];
+  onSave: (product: Product, patch: { category: string }) => void;
+  onDelete: (product: Product) => void;
+}) {
+  const current = product.category ?? "Otros";
+  const [category, setCategory] = useState(current);
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave(product, { category });
+      }}
+      className="flex flex-col gap-4"
+    >
+      <div>
+        <label className="mb-1.5 block text-sm font-medium text-ink-soft" htmlFor="p-cat">Categoría</label>
+        <select id="p-cat" className={field} value={category} onChange={(e) => setCategory(e.target.value)}>
+          {(categories.includes(category) ? categories : [...categories, category]).map((c) => (
+            <option key={c}>{c}</option>
+          ))}
+        </select>
+      </div>
+      <button className="min-h-12 rounded-2xl bg-forest px-8 text-base font-medium text-surface shadow-sm transition active:scale-95">
+        Guardar
+      </button>
+      <button
+        type="button"
+        onClick={() => onDelete(product)}
+        className="flex min-h-11 items-center justify-center gap-2 text-sm text-hanko"
+      >
+        <Trash2 size={16} /> Quitar de la lista de productos
+      </button>
+    </form>
   );
 }
 

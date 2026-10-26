@@ -20,6 +20,9 @@ export type CardExpenseRow = {
   created_at: string;
 };
 
+/** Cuánto le toca a un participante de un gasto. */
+export type CardExpenseSplit = { expense_id: string; participant_id: string; amount: number };
+
 /** Saldo de una tarjeta de débito en céntimos: lo inicial más los ingresos, menos los gastos pagados con ella. */
 export function debitBalanceCents(
   initialBalance: number,

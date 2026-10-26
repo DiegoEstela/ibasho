@@ -15,7 +15,7 @@ export type NavItem = {
 export const navModules: NavItem[] = [
   { href: "/inicio", label: "Inicio", icon: Home, available: true },
   { href: "/compras", label: "Compras", icon: ShoppingBasket, available: true },
-  { href: "/cocina", label: "Cocina", icon: CookingPot, available: true },
+  { href: "/cocina", label: "Recetas", icon: CookingPot, available: true },
   { href: "/gastos", label: "Gastos", icon: Wallet, available: true },
   { href: "/notitas", label: "Notitas", icon: Mail, available: true },
   { href: "/viajes", label: "Viajes", icon: MapPin, available: true },

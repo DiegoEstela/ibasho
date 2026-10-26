@@ -146,8 +146,14 @@ export function NotesView({ householdId, userId, people, initialNotes, initialRe
   async function remove(note: Note) {
     setDetailId(null);
     setNotes((prev) => prev.filter((n) => n.id !== note.id));
-    const { error } = await supabase.from("daily_messages").delete().eq("id", note.id);
-    if (error) refetch();
+    // Las que te enviaron solo se quitan de tu diario; las tuyas se borran para ambos.
+    const { error } = note.from_user === userId
+      ? await supabase.from("daily_messages").delete().eq("id", note.id)
+      : await supabase.rpc("hide_note", { p_id: note.id });
+    if (error) {
+      refetch();
+      flash("No se pudo eliminar. Revisa tu conexión.");
+    }
   }
 
   function flash(text: string) {
@@ -347,6 +353,12 @@ export function NotesView({ householdId, userId, people, initialNotes, initialRe
                     );
                   })}
                 </div>
+                <button
+                  onClick={() => remove(detail)}
+                  className="mx-auto mt-4 flex min-h-11 items-center justify-center gap-2 px-4 text-sm text-hanko"
+                >
+                  <Trash2 size={15} /> Quitar de mi diario
+                </button>
               </div>
             ) : (
               <div className="flex flex-col gap-3">
