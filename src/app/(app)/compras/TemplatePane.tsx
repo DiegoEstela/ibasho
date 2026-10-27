@@ -16,6 +16,8 @@ type Props = {
   templates: Template[];
   templatesUnavailable: boolean;
   onAdd: (picks: { name: string; quantity: string | null }[]) => void;
+  /** Marcar como comprados, sin pasar por la lista. */
+  onBought: (picks: { name: string; quantity: string | null }[]) => void;
   onSaveTemplate: (template: TemplateInput) => Promise<boolean>;
   onDeleteTemplate: (id: string) => Promise<boolean>;
   onClose: () => void;
@@ -77,6 +79,10 @@ export function TemplatePane(props: Props) {
           onEdit={() => setMode({ kind: "edit", draft: { id: template.id, name: template.name, items: template.items } })}
           onAdd={(picks) => {
             props.onAdd(picks);
+            props.onClose();
+          }}
+          onBought={(picks) => {
+            props.onBought(picks);
             props.onClose();
           }}
         />
@@ -166,6 +172,7 @@ function TemplateDetail({
   onBack,
   onEdit,
   onAdd,
+  onBought,
 }: {
   template: Template;
   byId: Map<string, Product>;
@@ -173,6 +180,7 @@ function TemplateDetail({
   onBack: () => void;
   onEdit: () => void;
   onAdd: (picks: { name: string; quantity: string | null }[]) => void;
+  onBought: (picks: { name: string; quantity: string | null }[]) => void;
 }) {
   const rows = useMemo(
     () =>
@@ -201,13 +209,9 @@ function TemplateDetail({
     });
   }
 
-  function submit() {
-    onAdd(
-      rows
-        .filter((r) => selected.has(r.product.id))
-        .map((r) => ({ name: capitalize(r.product.name), quantity: r.item.quantity })),
-    );
-  }
+  const picked = rows.filter((r) => selected.has(r.product.id));
+  const toAdd = picked.filter((r) => !r.inList);
+  const asPick = (r: (typeof rows)[number]) => ({ name: capitalize(r.product.name), quantity: r.item.quantity });
 
   return (
     <div className="flex flex-col gap-3">
@@ -240,7 +244,6 @@ function TemplateDetail({
               name={item.quantity ? `${capitalize(product.name)} · ${item.quantity}` : capitalize(product.name)}
               selected={selected.has(product.id)}
               onToggle={() => toggle(product.id)}
-              disabled={inList}
               hint={inList ? "En la lista" : home ? "Lo tienes en casa" : undefined}
               tone={home ? "warn" : "muted"}
             />
@@ -248,9 +251,17 @@ function TemplateDetail({
         </div>
       )}
 
-      <div className="sticky bottom-0 -mx-1 bg-background/95 px-1 pb-1 pt-2 backdrop-blur">
-        <button type="button" onClick={submit} disabled={selected.size === 0} className={primary}>
-          {selected.size === 0 ? "Marca lo que falta" : `Añadir ${selected.size} a la lista`}
+      <div className="sticky bottom-0 -mx-1 grid grid-cols-2 gap-2 bg-background/95 px-1 pb-1 pt-2 backdrop-blur">
+        <button type="button" onClick={() => onAdd(toAdd.map(asPick))} disabled={toAdd.length === 0} className={primary}>
+          {toAdd.length === 0 ? "A la lista" : `A la lista (${toAdd.length})`}
+        </button>
+        <button
+          type="button"
+          onClick={() => onBought(picked.map(asPick))}
+          disabled={picked.length === 0}
+          className="min-h-12 w-full rounded-2xl border border-forest bg-surface px-4 text-base font-medium text-forest shadow-sm transition active:scale-95 disabled:opacity-40"
+        >
+          {picked.length === 0 ? "Ya lo compré" : `Ya lo compré (${picked.length})`}
         </button>
       </div>
     </div>

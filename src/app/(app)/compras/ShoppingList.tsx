@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Check, ChevronDown, House, LayoutGrid, List, ListChecks, Package, Pencil, Plus, ShoppingBasket, Trash2 } from "lucide-react";
+import { Check, ChevronDown, House, LayoutGrid, List, ListChecks, ListPlus, Package, Pencil, Plus, ShoppingBasket, Trash2, X } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SwipeRow } from "@/components/ui/SwipeRow";
 import { CATEGORIES, DEFAULT_CATEGORY_STYLE, classify, type Category } from "@/lib/compras/categories";
 import { colorFor, iconFor } from "@/lib/compras/icons";
-import { madridDay, purchaseStats, type PurchaseRow } from "@/lib/compras/suggestions";
+import { purchaseStats, type PurchaseRow, type PurchaseStat } from "@/lib/compras/suggestions";
 import { deleteTemplate, loadTemplates, saveTemplate, type Template } from "@/lib/compras/templates";
 import { formatQuantity, parseIngredient } from "@/lib/cocina/parse";
 import { useProfile } from "@/components/profile/ProfileProvider";
@@ -16,8 +16,8 @@ import { notifyPartner } from "@/lib/push/client";
 import { timeAgo } from "@/lib/utils/time";
 import { CategorySheet } from "./CategorySheet";
 import { CategoryTiles } from "./CategoryTiles";
-import { QuickPickSheet, type QuickPick } from "./QuickPickSheet";
-import type { TemplateInput } from "./TemplatePane";
+import { PickRow } from "./PickRow";
+import { TemplatePane, type TemplateInput } from "./TemplatePane";
 import type { Cat, CustomCategoryRow } from "./categoryTypes";
 
 export type Item = {
@@ -28,6 +28,8 @@ export type Item = {
   note: string | null;
   category: string;
   store: string | null;
+  /** Va en la lista corta del próximo súper («Voy a comprar»). */
+  en_salida: boolean;
   done: boolean;
   done_by: string | null;
   done_at: string | null;
@@ -49,6 +51,8 @@ type Props = {
   history: PurchaseRow[];
   members: Member[];
 };
+
+type ProductPick = { name: string; quantity: string | null };
 
 type Toast = { text: string; undo?: () => void; actionLabel?: string };
 
@@ -119,7 +123,10 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [catSheet, setCatSheet] = useState<{ open: boolean; cat: Cat | null }>({ open: false, cat: null });
   const [templates, setTemplates] = useState<Template[]>(initialTemplates);
-  const [quickOpen, setQuickOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [filter, setFilter] = useState<"todo" | "salida">("todo");
+  const [selecting, setSelecting] = useState(false);
+  const [selection, setSelection] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -147,7 +154,6 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   }
 
   const stats = useMemo(() => purchaseStats(history), [history]);
-  const today = useMemo(() => madridDay(now), [now]);
 
   // ---------- Tiempo real ----------
   const refetch = useCallback(async () => {
@@ -272,7 +278,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   }
 
   /** Pone un producto en la lista de la próxima compra; lo que está en la lista es lo que falta en casa. */
-  async function addToList(name: string, quantity: string | null, forcedCategory?: string | null, silent = false, notify = true) {
+  async function addToList(name: string, quantity: string | null, forcedCategory?: string | null, silent = false, notify = true, inTrip = false) {
     const k = key(name);
 
     if (items.some((i) => !i.done && key(i.name) === k)) {
@@ -291,6 +297,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
       note: null,
       category,
       store: null,
+      en_salida: inTrip,
       done: false,
       done_by: null,
       done_at: null,
@@ -315,7 +322,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
 
     const { data, error } = await supabase
       .from("shopping_items")
-      .insert({ household_id: householdId, product_id: productId, name, quantity, category })
+      .insert({ household_id: householdId, product_id: productId, name, quantity, category, ...(inTrip ? { en_salida: true } : {}) })
       .select()
       .single();
 
@@ -330,8 +337,8 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     if (notify) notifyPartner({ kind: "compras", title: "Lista de compras", body: `${profile.name || "Tu pareja"} agregó «${name}»`, url: "/compras" });
   }
 
-  /** Añade varios de golpe desde «Voy a comprar»; la pareja recibe un solo aviso. */
-  async function addMany(picks: QuickPick[]) {
+  /** Añade varios de golpe (una plantilla); la pareja recibe un solo aviso. */
+  async function addMany(picks: ProductPick[]) {
     const inList = new Set(items.filter((i) => !i.done).map((i) => key(i.name)));
     const fresh = picks.filter((p) => !inList.has(key(p.name)));
     if (fresh.length === 0) return;
@@ -343,6 +350,45 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
       body: fresh.length === 1 ? `${profile.name || "Tu pareja"} agregó «${fresh[0].name}»` : `${profile.name || "Tu pareja"} agregó ${fresh.length} productos`,
       url: "/compras",
     });
+  }
+
+  /** Da por comprados varios productos (desde una plantilla): lo pendiente se tacha y lo demás queda comprado y en casa. */
+  async function buyMany(picks: ProductPick[]) {
+    let count = 0;
+    for (const pick of picks) {
+      const pendingItem = items.find((i) => !i.done && !i.id.startsWith("tmp-") && key(i.name) === key(pick.name));
+      if (pendingItem) {
+        await toggle(pendingItem);
+        count++;
+        continue;
+      }
+      const known = products[key(pick.name)];
+      const category = known?.category ?? classify(pick.name);
+      const product = known ?? (await ensureProduct(pick.name, category, { in_stock: true }));
+      if (known && !known.in_stock) {
+        patchProduct(known, { in_stock: true });
+        await supabase.from("products").update({ in_stock: true }).eq("id", known.id);
+      }
+      const { data } = await supabase
+        .from("shopping_items")
+        .insert({
+          household_id: householdId,
+          product_id: product?.id ?? null,
+          name: pick.name,
+          quantity: pick.quantity,
+          category,
+          done: true,
+          done_by: userId,
+          done_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+      if (data) {
+        setItems((prev) => (prev.some((i) => i.id === data.id) ? prev : [data as Item, ...prev]));
+        count++;
+      }
+    }
+    flash({ text: count === 1 ? "Marcado como comprado: 1 producto" : `Marcados como comprados: ${count} productos` });
   }
 
   async function saveTemplateFromSheet(template: TemplateInput) {
@@ -360,10 +406,91 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     return ok;
   }
 
+  // ---------- La salida al súper ----------
+  /** Aparta (o devuelve) productos de la lista corta; si falla, se vuelve a pedir la lista. */
+  async function setSalida(ids: string[], value: boolean) {
+    if (ids.length === 0) return true;
+    const set = new Set(ids);
+    setItems((prev) => prev.map((i) => (set.has(i.id) ? { ...i, en_salida: value } : i)));
+    const { error } = await supabase.from("shopping_items").update({ en_salida: value }).in("id", ids);
+    if (error) {
+      await refetch();
+      flash({ text: "No se pudo guardar la lista del súper. Revisa tu conexión." });
+      return false;
+    }
+    return true;
+  }
+
+  function startSelecting() {
+    setSelection(new Set(items.filter((i) => !i.done && i.en_salida).map((i) => i.id)));
+    setSelectedCat(null);
+    setSelecting(true);
+  }
+
+  function toggleSelect(item: Item) {
+    if (item.id.startsWith("tmp-")) return;
+    setSelection((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(item.id)) next.add(item.id);
+      return next;
+    });
+  }
+
+  function toggleSelectGroup(list: Item[]) {
+    const ids = list.filter((i) => !i.id.startsWith("tmp-")).map((i) => i.id);
+    setSelection((prev) => {
+      const next = new Set(prev);
+      const all = ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (all) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }
+
+  async function saveSelection() {
+    // Por si la pareja compró algo mientras se elegía.
+    const pendingIds = new Set(items.filter((i) => !i.done).map((i) => i.id));
+    const keep = new Set([...selection].filter((id) => pendingIds.has(id)));
+    const current = items.filter((i) => !i.done && i.en_salida);
+    const toAdd = [...keep].filter((id) => !current.some((i) => i.id === id));
+    const toRemove = current.filter((i) => !keep.has(i.id)).map((i) => i.id);
+    setSelecting(false);
+    setFilter(keep.size > 0 ? "salida" : "todo");
+    const [a, b] = await Promise.all([setSalida(toAdd, true), setSalida(toRemove, false)]);
+    if (a && b) flash({ text: keep.size === 0 ? "Selección vaciada" : keep.size === 1 ? "Listo para el súper: 1 producto" : `Listo para el súper: ${keep.size} productos` });
+  }
+
+  async function closeSalida() {
+    const ids = items.filter((i) => !i.done && i.en_salida).map((i) => i.id);
+    if (!(await setSalida(ids, false))) return;
+    flash({
+      text: ids.length === 1 ? "Compra cerrada · 1 producto vuelve a la lista" : `Compra cerrada · ${ids.length} productos vuelven a la lista`,
+      undo: () => {
+        setToast(null);
+        setFilter("salida");
+        setSalida(ids, true);
+      },
+    });
+  }
+
+  function leaveSalida(item: Item) {
+    setEditing(null);
+    setSalida([item.id], false);
+    flash({
+      text: `«${item.name}» sale de Para el súper`,
+      undo: () => {
+        setToast(null);
+        setSalida([item.id], true);
+      },
+    });
+  }
+
   async function addByName(raw: string, forcedCategory?: string | null) {
     const parsed = parseIngredient(raw);
     if (!parsed) return;
-    await addToList(capitalize(parsed.name), formatQuantity(parsed.quantity, parsed.unit) || null, forcedCategory);
+    await addToList(capitalize(parsed.name), formatQuantity(parsed.quantity, parsed.unit) || null, forcedCategory, false, true, activeFilter === "salida");
   }
 
   /** Marca si un producto está en casa o falta. Lo que falta pasa a la lista; lo que ya hay sale de ella. */
@@ -448,7 +575,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     if (item.id.startsWith("tmp-")) return;
     const done = !item.done;
     const patch = done
-      ? { done, done_by: userId, done_at: new Date().toISOString() }
+      ? { done, done_by: userId, done_at: new Date().toISOString(), ...(item.en_salida ? { en_salida: false } : {}) }
       : { done, done_by: null, done_at: null };
 
     if (done) navigator.vibrate?.(12);
@@ -599,18 +726,13 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     return [...groups.entries()].sort((a, b) => catOrder(a[0]) - catOrder(b[0]));
   }, [tab, atHome, productList, selectedCat, text, catOrder]);
 
-  const grouped = useMemo(() => {
-    const groups = new Map<string, Item[]>();
-    for (const item of pending) {
-      const list = groups.get(item.category) ?? [];
-      list.push(item);
-      groups.set(item.category, list);
-    }
-    // Dentro de cada categoría, arriba lo que más se compra (el orden previo, lo más reciente, desempata).
-    const rank = (i: Item) => (i.product_id ? (stats.get(i.product_id)?.count ?? 0) : 0);
-    for (const list of groups.values()) list.sort((a, b) => rank(b) - rank(a));
-    return [...groups.entries()].sort((a, b) => catOrder(a[0]) - catOrder(b[0]));
-  }, [pending, catOrder, stats]);
+  // La salida: lo pendiente que se apartó para el súper. Si se vacía, se vuelve a ver toda la lista.
+  const salida = pending.filter((i) => i.en_salida);
+  const activeFilter: "todo" | "salida" = !selecting && filter === "salida" && salida.length > 0 ? "salida" : "todo";
+  // Las baldosas de categorías (móvil) solo con la lista completa y fuera de la selección.
+  const showTiles = tab === "compra" && view === "categorias" && !selecting && activeFilter === "todo";
+
+  const grouped = groupByCategory(activeFilter === "salida" ? salida : pending, stats, catOrder);
 
   const visibleGroups = useMemo(
     () => (selectedCat ? grouped.filter(([c]) => c === selectedCat) : grouped),
@@ -687,7 +809,11 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   const tabInfo = TABS.find(([value]) => value === tab)!;
   const subtitle =
     tab === "compra"
-      ? pending.length === 0
+      ? activeFilter === "salida"
+        ? salida.length === 1
+          ? "1 producto para el súper"
+          : `${salida.length} productos para el súper`
+        : pending.length === 0
         ? "Todo comprado"
         : pending.length === 1
           ? "Falta 1 producto"
@@ -767,6 +893,49 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
       </div>
       <p className="mb-1 hidden text-sm text-ink-soft lg:block">{tabInfo[2]}</p>
 
+      {/* Toda la lista o solo la salida al súper */}
+      {tab === "compra" && selecting && (
+        <p className="mb-1 px-1 text-sm text-ink-soft">Marca lo que vas a comprar. El resto se queda en la lista.</p>
+      )}
+      {tab === "compra" && !selecting && (
+        <div className="mb-1 flex items-center gap-2 lg:max-w-3xl">
+          {salida.length > 0 && (
+            <div className="flex gap-1 rounded-xl bg-washi-deep p-1" role="tablist" aria-label="Qué lista ver">
+              {(
+                [
+                  ["todo", "Toda la lista", pending.length],
+                  ["salida", "Para el súper", salida.length],
+                ] as const
+              ).map(([value, label, n]) => (
+                <button
+                  key={value}
+                  role="tab"
+                  aria-selected={activeFilter === value}
+                  onClick={() => setFilter(value)}
+                  className={`min-h-9 rounded-lg px-3 text-[13px] font-medium transition ${
+                    activeFilter === value ? "bg-surface text-forest shadow-sm" : "text-ink-soft"
+                  }`}
+                >
+                  {label} · {n}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex-1" />
+          {activeFilter === "salida" && (
+            <button onClick={closeSalida} className="min-h-10 rounded-xl px-3 text-sm font-medium text-hanko transition active:scale-95">
+              Cerrar compra
+            </button>
+          )}
+          <button
+            onClick={() => setTemplatesOpen(true)}
+            className="flex min-h-10 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-forest transition active:scale-95"
+          >
+            <ListPlus size={18} /> Plantillas
+          </button>
+        </div>
+      )}
+
       {/* Campo siempre visible */}
       <div className="sticky top-[env(safe-area-inset-top)] z-10 -mx-4 bg-background/90 px-4 pb-2 pt-1 backdrop-blur lg:-mx-10 lg:px-10 lg:pb-3 lg:pt-4">
         <form onSubmit={submit} className="relative flex gap-2 lg:max-w-3xl">
@@ -788,15 +957,15 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
           >
             <Plus size={22} />
           </button>
-          {tab === "compra" && (
+          {tab === "compra" && pending.length > 0 && !selecting && (
             <button
               type="button"
-              onClick={() => setQuickOpen(true)}
-              aria-label="Voy a comprar"
+              onClick={startSelecting}
+              aria-label={salida.length > 0 ? "Editar lo que vas a comprar" : "Voy a comprar"}
               className="flex size-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-line bg-surface text-forest shadow-sm transition active:scale-95 lg:w-auto lg:px-4"
             >
               <ListChecks size={20} />
-              <span className="hidden text-sm font-medium lg:inline">Voy a comprar</span>
+              <span className="hidden text-sm font-medium lg:inline">{salida.length > 0 ? "Editar selección" : "Voy a comprar"}</span>
             </button>
           )}
         </form>
@@ -839,7 +1008,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
       <div className="mt-1 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-x-10 xl:grid-cols-[minmax(0,1fr)_26rem]">
         {/* Categorías: en escritorio quedan fijas a la derecha y solo se desplaza la lista */}
         <div
-          className={`${tab === "compra" && view === "categorias" ? "" : "hidden"} lg:sticky lg:top-24 lg:col-start-2 lg:row-start-1 lg:block lg:max-h-[calc(100dvh-7rem)] lg:overflow-y-auto lg:pb-4`}
+          className={`${showTiles ? "" : "hidden"} lg:sticky lg:top-24 lg:col-start-2 lg:row-start-1 lg:block lg:max-h-[calc(100dvh-7rem)] lg:overflow-y-auto lg:pb-4`}
         >
           <h2 className="mb-3 hidden font-display text-xl font-bold lg:block">Categorías</h2>
           <CategoryTiles
@@ -852,7 +1021,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
         </div>
 
         {/* Productos de la categoría elegida (solo teléfono) */}
-        {tab === "compra" && view === "categorias" && (
+        {showTiles && (
           <div className="lg:hidden">
             {selectedCat ? (
               <>
@@ -889,7 +1058,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
         )}
 
         {/* Zona principal: lo único que se desplaza en escritorio */}
-        <div className={`${tab === "compra" && view === "categorias" ? "hidden lg:block" : ""} lg:col-start-1 lg:row-start-1`}>
+        <div className={`${showTiles ? "hidden lg:block" : ""} lg:col-start-1 lg:row-start-1`}>
           {selectedCat && (
             <div className="mb-4 hidden items-center gap-3 lg:flex">
               <span className="rounded-full bg-forest/15 px-3 py-1 text-sm font-medium text-forest">{selectedCat}</span>
@@ -956,12 +1125,6 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
                   <p className="mt-1 text-sm text-ink-soft">
                     Escribe arriba lo que falta y aparecerá en el teléfono de tu pareja al instante.
                   </p>
-                  <button
-                    onClick={() => setQuickOpen(true)}
-                    className="mx-auto mt-4 flex min-h-11 items-center gap-2 rounded-xl bg-forest px-5 text-sm font-medium text-surface shadow-sm transition active:scale-95"
-                  >
-                    <ListChecks size={18} /> Voy a comprar
-                  </button>
                 </div>
               ) : (
                 <div className="flex flex-col gap-3 lg:block lg:columns-2 lg:gap-6 2xl:columns-3">
@@ -970,11 +1133,27 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
                     const Icon = iconFor(meta.icon);
                     return (
                       <div key={category} className="lg:mb-6 lg:break-inside-avoid">
-                        <h2 className="mb-1 flex items-center gap-1.5 px-2 text-[11px] font-medium uppercase tracking-wider text-ink-soft lg:mb-1.5 lg:gap-2 lg:text-xs">
-                          <Icon size={14} style={{ color: colorFor(meta.color) }} />
-                          {category}
-                        </h2>
-                        <ItemRows list={list} onToggle={toggle} onRemove={remove} onEdit={setEditing} />
+                        <div className="mb-1 flex items-center justify-between lg:mb-1.5">
+                          <h2 className="flex items-center gap-1.5 px-2 text-[11px] font-medium uppercase tracking-wider text-ink-soft lg:gap-2 lg:text-xs">
+                            <Icon size={14} style={{ color: colorFor(meta.color) }} />
+                            {category}
+                          </h2>
+                          {selecting && (
+                            <button onClick={() => toggleSelectGroup(list)} className="min-h-9 px-2 text-xs font-medium text-forest">
+                              {list.every((i) => selection.has(i.id)) ? "Quitar todo" : "Marcar todo"}
+                            </button>
+                          )}
+                        </div>
+                        <ItemRows
+                          list={list}
+                          onToggle={toggle}
+                          onRemove={remove}
+                          onEdit={setEditing}
+                          selecting={selecting}
+                          selected={selection}
+                          onSelect={toggleSelect}
+                          onLeave={activeFilter === "salida" ? leaveSalida : undefined}
+                        />
                       </div>
                     );
                   })}
@@ -1035,20 +1214,35 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
         </div>
       )}
 
-      <QuickPickSheet
-        open={quickOpen}
-        onClose={() => setQuickOpen(false)}
-        products={productList}
-        pending={pending}
-        allCats={allCats}
-        stats={stats}
-        today={today}
-        templates={templates}
-        templatesUnavailable={templatesUnavailable}
-        onAdd={addMany}
-        onSaveTemplate={saveTemplateFromSheet}
-        onDeleteTemplate={deleteTemplateFromSheet}
-      />
+      {selecting && (
+        <div className="fixed inset-x-4 bottom-24 z-40 mx-auto flex max-w-md items-center gap-2 rounded-2xl border border-line bg-surface p-2 shadow-lg lg:bottom-8">
+          <button onClick={() => setSelecting(false)} className="min-h-11 rounded-xl px-4 text-sm text-ink-soft">
+            Cancelar
+          </button>
+          <button
+            onClick={saveSelection}
+            disabled={selection.size === 0 && salida.length === 0}
+            className="min-h-11 flex-1 rounded-xl bg-forest px-4 text-sm font-medium text-surface transition active:scale-95 disabled:opacity-40"
+          >
+            {selection.size > 0 ? `Guardar para el súper (${selection.size})` : salida.length > 0 ? "Vaciar selección" : "Elige lo que vas a comprar"}
+          </button>
+        </div>
+      )}
+
+      <BottomSheet open={templatesOpen} onClose={() => setTemplatesOpen(false)} title="Plantillas">
+        <TemplatePane
+          products={productList}
+          pending={pending}
+          stats={stats}
+          templates={templates}
+          templatesUnavailable={templatesUnavailable}
+          onAdd={addMany}
+          onBought={buyMany}
+          onSaveTemplate={saveTemplateFromSheet}
+          onDeleteTemplate={deleteTemplateFromSheet}
+          onClose={() => setTemplatesOpen(false)}
+        />
+      </BottomSheet>
 
       <CategorySheet
         open={catSheet.open}
@@ -1064,6 +1258,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
         item={editing}
         onClose={() => setEditing(null)}
         onSave={save}
+        onLeaveSalida={leaveSalida}
         onDelete={(item) => {
           setEditing(null);
           remove(item);
@@ -1079,6 +1274,19 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
       />
     </section>
   );
+}
+
+/** Agrupa por categoría; dentro de cada una, arriba lo que más se compra (lo más reciente desempata). */
+function groupByCategory(list: Item[], stats: Map<string, PurchaseStat>, catOrder: (name: string) => number) {
+  const groups = new Map<string, Item[]>();
+  for (const item of list) {
+    const group = groups.get(item.category) ?? [];
+    group.push(item);
+    groups.set(item.category, group);
+  }
+  const rank = (i: Item) => (i.product_id ? (stats.get(i.product_id)?.count ?? 0) : 0);
+  for (const group of groups.values()) group.sort((a, b) => rank(b) - rank(a));
+  return [...groups.entries()].sort((a, b) => catOrder(a[0]) - catOrder(b[0]));
 }
 
 /** Productos agrupados por categoría; cada fila la dibuja quien lo usa. */
@@ -1208,17 +1416,19 @@ function EditSheet({
   item,
   onClose,
   onSave,
+  onLeaveSalida,
   onDelete,
 }: {
   categories: string[];
   item: Item | null;
   onClose: () => void;
   onSave: (item: Item, patch: Pick<Item, "name" | "quantity" | "note" | "category" | "store">) => void;
+  onLeaveSalida: (item: Item) => void;
   onDelete: (item: Item) => void;
 }) {
   return (
     <BottomSheet open={!!item} onClose={onClose} title="Editar producto">
-      {item && <EditForm key={item.id} item={item} categories={categories} onSave={onSave} onDelete={onDelete} />}
+      {item && <EditForm key={item.id} item={item} categories={categories} onSave={onSave} onLeaveSalida={onLeaveSalida} onDelete={onDelete} />}
     </BottomSheet>
   );
 }
@@ -1227,11 +1437,13 @@ function EditForm({
   item,
   categories,
   onSave,
+  onLeaveSalida,
   onDelete,
 }: {
   item: Item;
   categories: string[];
   onSave: (item: Item, patch: Pick<Item, "name" | "quantity" | "note" | "category" | "store">) => void;
+  onLeaveSalida: (item: Item) => void;
   onDelete: (item: Item) => void;
 }) {
   const [name, setName] = useState(item.name);
@@ -1291,6 +1503,15 @@ function EditForm({
       <button className="min-h-12 rounded-2xl bg-forest px-8 text-base font-medium text-surface shadow-sm transition active:scale-95">
         Guardar
       </button>
+      {item.en_salida && (
+        <button
+          type="button"
+          onClick={() => onLeaveSalida(item)}
+          className="flex min-h-11 items-center justify-center gap-2 text-sm text-ink-soft"
+        >
+          <ListChecks size={16} /> Quitar de «Para el súper» (sigue en la lista)
+        </button>
+      )}
       <button
         type="button"
         onClick={() => onDelete(item)}
@@ -1307,12 +1528,38 @@ function ItemRows({
   onToggle,
   onRemove,
   onEdit,
+  selecting = false,
+  selected,
+  onSelect,
+  onLeave,
 }: {
   list: Item[];
   onToggle: (item: Item) => void;
   onRemove: (item: Item) => void;
   onEdit: (item: Item) => void;
+  /** Modo «Voy a comprar»: las filas se eligen en vez de tacharse. */
+  selecting?: boolean;
+  selected?: Set<string>;
+  onSelect?: (item: Item) => void;
+  /** En «Para el súper»: un toque para devolver el producto a la lista sin borrarlo. */
+  onLeave?: (item: Item) => void;
 }) {
+  if (selecting) {
+    return (
+      <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+        {list.map((item) => (
+          <li key={item.id}>
+            <PickRow
+              name={item.name}
+              selected={!!selected?.has(item.id)}
+              onToggle={() => onSelect?.(item)}
+              hint={item.quantity ?? undefined}
+            />
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
       {list.map((item) => (
@@ -1335,6 +1582,15 @@ function ItemRows({
                   <span className="block text-xs text-ink-soft">{[item.store, item.note].filter(Boolean).join(" · ")}</span>
                 )}
               </button>
+              {onLeave && (
+                <button
+                  onClick={() => onLeave(item)}
+                  aria-label={`Quitar «${item.name}» de Para el súper`}
+                  className="flex size-11 shrink-0 items-center justify-center text-ink-soft transition active:scale-90"
+                >
+                  <X size={18} />
+                </button>
+              )}
             </div>
           </SwipeRow>
         </li>
