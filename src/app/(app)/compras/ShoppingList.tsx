@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Check, ChevronDown, House, LayoutGrid, List, Package, Pencil, Plus, ShoppingBasket, Trash2 } from "lucide-react";
+import { Check, ChevronDown, House, LayoutGrid, List, ListChecks, Package, Pencil, Plus, ShoppingBasket, Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SwipeRow } from "@/components/ui/SwipeRow";
 import { CATEGORIES, DEFAULT_CATEGORY_STYLE, classify, type Category } from "@/lib/compras/categories";
 import { colorFor, iconFor } from "@/lib/compras/icons";
+import { madridDay, purchaseStats, type PurchaseRow } from "@/lib/compras/suggestions";
+import { deleteTemplate, loadTemplates, saveTemplate, type Template } from "@/lib/compras/templates";
 import { formatQuantity, parseIngredient } from "@/lib/cocina/parse";
 import { useProfile } from "@/components/profile/ProfileProvider";
 import { createClient } from "@/lib/supabase/client";
@@ -14,6 +16,8 @@ import { notifyPartner } from "@/lib/push/client";
 import { timeAgo } from "@/lib/utils/time";
 import { CategorySheet } from "./CategorySheet";
 import { CategoryTiles } from "./CategoryTiles";
+import { QuickPickSheet, type QuickPick } from "./QuickPickSheet";
+import type { TemplateInput } from "./TemplatePane";
 import type { Cat, CustomCategoryRow } from "./categoryTypes";
 
 export type Item = {
@@ -39,6 +43,10 @@ type Props = {
   initialItems: Item[];
   initialProducts: Product[];
   initialCategories: CustomCategoryRow[];
+  initialTemplates: Template[];
+  templatesUnavailable: boolean;
+  /** Compras ya hechas, para saber qué toca comprar. */
+  history: PurchaseRow[];
   members: Member[];
 };
 
@@ -92,7 +100,7 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const field =
   "min-h-11 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest";
 
-export function ShoppingList({ householdId, userId, initialItems, initialProducts, initialCategories, members }: Props) {
+export function ShoppingList({ householdId, userId, initialItems, initialProducts, initialCategories, initialTemplates, templatesUnavailable, history, members }: Props) {
   const profile = useProfile();
   const [supabase] = useState(() => createClient());
   const [now] = useState(() => Date.now());
@@ -110,6 +118,8 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   const [tab, setTab] = useState<Tab>("compra");
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [catSheet, setCatSheet] = useState<{ open: boolean; cat: Cat | null }>({ open: false, cat: null });
+  const [templates, setTemplates] = useState<Template[]>(initialTemplates);
+  const [quickOpen, setQuickOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -135,6 +145,9 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     setSelectedCat(null);
     setText("");
   }
+
+  const stats = useMemo(() => purchaseStats(history), [history]);
+  const today = useMemo(() => madridDay(now), [now]);
 
   // ---------- Tiempo real ----------
   const refetch = useCallback(async () => {
@@ -220,6 +233,23 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     };
   }, [supabase, householdId, refetch]);
 
+  // Las plantillas se vuelven a pedir enteras cuando cambia cualquiera de sus dos tablas.
+  useEffect(() => {
+    if (templatesUnavailable) return;
+    const reload = async () => {
+      const next = await loadTemplates(supabase);
+      if (next) setTemplates(next);
+    };
+    const channel = supabase
+      .channel(`shopping-templates-${householdId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "shopping_templates", filter: `household_id=eq.${householdId}` }, reload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "shopping_template_items", filter: `household_id=eq.${householdId}` }, reload)
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, householdId, templatesUnavailable]);
+
   // ---------- Acciones ----------
   function patchProduct(p: Product, patch: Partial<Product>) {
     setProducts((prev) => ({ ...prev, [key(p.name)]: { ...p, ...patch } }));
@@ -242,7 +272,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   }
 
   /** Pone un producto en la lista de la próxima compra; lo que está en la lista es lo que falta en casa. */
-  async function addToList(name: string, quantity: string | null, forcedCategory?: string | null, silent = false) {
+  async function addToList(name: string, quantity: string | null, forcedCategory?: string | null, silent = false, notify = true) {
     const k = key(name);
 
     if (items.some((i) => !i.done && key(i.name) === k)) {
@@ -297,7 +327,37 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     setItems((prev) =>
       prev.some((i) => i.id === data.id) ? prev.filter((i) => i.id !== tempId) : prev.map((i) => (i.id === tempId ? (data as Item) : i)),
     );
-    notifyPartner({ kind: "compras", title: "Lista de compras", body: `${profile.name || "Tu pareja"} agregó «${name}»`, url: "/compras" });
+    if (notify) notifyPartner({ kind: "compras", title: "Lista de compras", body: `${profile.name || "Tu pareja"} agregó «${name}»`, url: "/compras" });
+  }
+
+  /** Añade varios de golpe desde «Voy a comprar»; la pareja recibe un solo aviso. */
+  async function addMany(picks: QuickPick[]) {
+    const inList = new Set(items.filter((i) => !i.done).map((i) => key(i.name)));
+    const fresh = picks.filter((p) => !inList.has(key(p.name)));
+    if (fresh.length === 0) return;
+    await Promise.all(fresh.map((p) => addToList(p.name, p.quantity, null, true, false)));
+    flash({ text: fresh.length === 1 ? `Añadido «${fresh[0].name}»` : `Añadidos ${fresh.length} productos` });
+    notifyPartner({
+      kind: "compras",
+      title: "Lista de compras",
+      body: fresh.length === 1 ? `${profile.name || "Tu pareja"} agregó «${fresh[0].name}»` : `${profile.name || "Tu pareja"} agregó ${fresh.length} productos`,
+      url: "/compras",
+    });
+  }
+
+  async function saveTemplateFromSheet(template: TemplateInput) {
+    const ok = await saveTemplate(supabase, householdId, template);
+    if (ok) {
+      const next = await loadTemplates(supabase);
+      if (next) setTemplates(next);
+    }
+    return ok;
+  }
+
+  async function deleteTemplateFromSheet(id: string) {
+    const ok = await deleteTemplate(supabase, id);
+    if (ok) setTemplates((prev) => prev.filter((t) => t.id !== id));
+    return ok;
   }
 
   async function addByName(raw: string, forcedCategory?: string | null) {
@@ -546,8 +606,11 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
       list.push(item);
       groups.set(item.category, list);
     }
+    // Dentro de cada categoría, arriba lo que más se compra (el orden previo, lo más reciente, desempata).
+    const rank = (i: Item) => (i.product_id ? (stats.get(i.product_id)?.count ?? 0) : 0);
+    for (const list of groups.values()) list.sort((a, b) => rank(b) - rank(a));
     return [...groups.entries()].sort((a, b) => catOrder(a[0]) - catOrder(b[0]));
-  }, [pending, catOrder]);
+  }, [pending, catOrder, stats]);
 
   const visibleGroups = useMemo(
     () => (selectedCat ? grouped.filter(([c]) => c === selectedCat) : grouped),
@@ -725,6 +788,17 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
           >
             <Plus size={22} />
           </button>
+          {tab === "compra" && (
+            <button
+              type="button"
+              onClick={() => setQuickOpen(true)}
+              aria-label="Voy a comprar"
+              className="flex size-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-line bg-surface text-forest shadow-sm transition active:scale-95 lg:w-auto lg:px-4"
+            >
+              <ListChecks size={20} />
+              <span className="hidden text-sm font-medium lg:inline">Voy a comprar</span>
+            </button>
+          )}
         </form>
 
         {(focused || text) && suggestions.length > 0 && (
@@ -882,6 +956,12 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
                   <p className="mt-1 text-sm text-ink-soft">
                     Escribe arriba lo que falta y aparecerá en el teléfono de tu pareja al instante.
                   </p>
+                  <button
+                    onClick={() => setQuickOpen(true)}
+                    className="mx-auto mt-4 flex min-h-11 items-center gap-2 rounded-xl bg-forest px-5 text-sm font-medium text-surface shadow-sm transition active:scale-95"
+                  >
+                    <ListChecks size={18} /> Voy a comprar
+                  </button>
                 </div>
               ) : (
                 <div className="flex flex-col gap-3 lg:block lg:columns-2 lg:gap-6 2xl:columns-3">
@@ -954,6 +1034,21 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
           )}
         </div>
       )}
+
+      <QuickPickSheet
+        open={quickOpen}
+        onClose={() => setQuickOpen(false)}
+        products={productList}
+        pending={pending}
+        allCats={allCats}
+        stats={stats}
+        today={today}
+        templates={templates}
+        templatesUnavailable={templatesUnavailable}
+        onAdd={addMany}
+        onSaveTemplate={saveTemplateFromSheet}
+        onDeleteTemplate={deleteTemplateFromSheet}
+      />
 
       <CategorySheet
         open={catSheet.open}
