@@ -145,7 +145,7 @@ export function PlacesTab({ trip, places, setPlaces, householdId, onEdit, onNew 
       </form>
       {error && <p role="alert" className="mt-2 text-sm text-hanko">{error}</p>}
 
-      <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1">
+      <div className="mt-3 flex items-center gap-2 chip-row">
         <button
           onClick={() => setCategory("")}
           aria-pressed={!category}

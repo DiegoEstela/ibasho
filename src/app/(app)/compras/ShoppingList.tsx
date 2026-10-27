@@ -728,7 +728,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
         </form>
 
         {(focused || text) && suggestions.length > 0 && (
-          <div className="mt-2 flex gap-2 overflow-x-auto pb-1 lg:max-w-3xl" role="listbox" aria-label="Sugerencias">
+          <div className="mt-2 flex gap-2 chip-row lg:max-w-3xl" role="listbox" aria-label="Sugerencias">
             {suggestions.map((s) => (
               <button
                 key={s}
@@ -745,7 +745,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
 
         {/* Filtro por categoría en el teléfono (productos y casa) */}
         {pantryActive && (
-          <div className="mt-2 flex gap-2 overflow-x-auto pb-1 lg:hidden" role="group" aria-label="Categorías">
+          <div className="mt-2 flex gap-2 chip-row lg:hidden" role="group" aria-label="Categorías">
             {[{ name: null as string | null, label: "Todas" }, ...allCats.filter((c) => (counts[c.name] ?? 0) > 0 || c.name === selectedCat).map((c) => ({ name: c.name as string | null, label: c.name }))].map((c) => (
               <button
                 key={c.label}

@@ -170,7 +170,7 @@ export function WishlistView({ householdId, userId, people, initialLists, initia
       {header}
 
       {/* Listas */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Listas">
+      <div className="flex items-center gap-2 chip-row" role="tablist" aria-label="Listas">
         {lists.map((l) => {
           const selected = l.id === active?.id;
           return (

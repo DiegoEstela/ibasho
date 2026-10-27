@@ -1,13 +1,15 @@
 import Link from "next/link";
-import { CreditCard, Users } from "lucide-react";
+import { CreditCard, Repeat, Users } from "lucide-react";
 
-/** Pestañas del módulo de Gastos: gastos compartidos y tarjetas con cuotas. */
-export function GastosTabs({ active }: { active: "compartidos" | "tarjetas" }) {
-  const tab = (href: string, key: "compartidos" | "tarjetas", label: string, Icon: typeof Users) => (
+type Section = "compartidos" | "tarjetas" | "fijos";
+
+/** Pestañas del módulo de Gastos: compartidos, tarjetas con cuotas y gastos fijos. */
+export function GastosTabs({ active }: { active: Section }) {
+  const tab = (href: string, key: Section, label: string, Icon: typeof Users) => (
     <Link
       href={href}
       aria-current={active === key ? "page" : undefined}
-      className={`flex min-h-10 flex-1 items-center justify-center gap-2 rounded-lg text-sm font-medium transition lg:flex-none lg:px-5 ${
+      className={`flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg text-[13px] font-medium transition lg:flex-none lg:gap-2 lg:px-5 lg:text-sm ${
         active === key ? "bg-surface text-forest shadow-sm" : "text-ink-soft"
       }`}
     >
@@ -19,6 +21,7 @@ export function GastosTabs({ active }: { active: "compartidos" | "tarjetas" }) {
     <nav aria-label="Secciones de gastos" className="mb-3 flex w-full gap-1 rounded-xl bg-washi-deep p-1 lg:w-fit">
       {tab("/gastos", "compartidos", "Compartidos", Users)}
       {tab("/gastos/tarjetas", "tarjetas", "Tarjetas", CreditCard)}
+      {tab("/gastos/fijos", "fijos", "Fijos", Repeat)}
     </nav>
   );
 }

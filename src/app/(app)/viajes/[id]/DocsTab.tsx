@@ -63,7 +63,7 @@ export function DocsTab({ docs, today, offlineIds, saveProgress, onSaveAll, onOp
       )}
 
       {docs.length > 0 && (
-        <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1">
+        <div className="mt-3 flex items-center gap-2 chip-row">
           <button
             onClick={() => setType("")}
             aria-pressed={!type}

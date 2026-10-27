@@ -179,7 +179,7 @@ export function BaulView({ householdId, initialDocs }: Props) {
             />
           </div>
 
-          <div className="mt-2.5 flex items-center gap-2 overflow-x-auto pb-1">
+          <div className="mt-2.5 flex items-center gap-2 chip-row">
             <button
               onClick={() => setCategory("")}
               aria-pressed={!category}

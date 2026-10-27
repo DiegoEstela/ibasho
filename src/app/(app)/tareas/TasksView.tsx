@@ -307,7 +307,7 @@ export function TasksView({ householdId, userId, people, initialTasks, initialCo
           </div>
 
           {partners.length > 0 && (
-            <div className="mt-3 flex items-center gap-2 overflow-x-auto" role="group" aria-label="Ver las tareas de">
+            <div className="mt-3 flex items-center gap-2 chip-row" role="group" aria-label="Ver las tareas de">
               {[{ id: "", label: "Todas" }, { id: "mias", label: "Mías" }, ...partners.map((p) => ({ id: p.id, label: p.name }))].map((opt) => (
                 <button
                   key={opt.id || "todas"}

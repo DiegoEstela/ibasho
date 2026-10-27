@@ -30,7 +30,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <Suspense>
         <Sidebar />
       </Suspense>
-      <main className="px-4 pb-20 pt-[max(0.75rem,env(safe-area-inset-top))] lg:ml-64 lg:px-10 lg:pb-10 lg:pt-10">
+      <main className="px-4 pb-20 pt-[max(0.75rem,env(safe-area-inset-top))] lg:ml-64 lg:px-10 lg:pb-10 lg:pt-5">
         <Suspense fallback={<PageSkeleton />}>
           <Gate>{children}</Gate>
         </Suspense>

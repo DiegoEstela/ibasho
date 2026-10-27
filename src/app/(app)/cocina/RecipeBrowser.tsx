@@ -35,7 +35,7 @@ export function RecipeBrowser({ recipes }: { recipes: RecipeCard[] }) {
     <>
       {allTags.length > 0 && (
         <div className="mt-3 flex items-center gap-2 lg:mt-6">
-          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1 lg:flex-wrap lg:overflow-visible" role="group" aria-label="Filtrar por etiqueta">
+          <div className="flex min-w-0 flex-1 gap-2 chip-row lg:flex-wrap lg:overflow-visible" role="group" aria-label="Filtrar por etiqueta">
             {allTags.map(([tag, count]) => {
               const active = selected.includes(tag);
               return (

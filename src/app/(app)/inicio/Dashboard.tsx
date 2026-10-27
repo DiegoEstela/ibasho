@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Bell, Check, House, Minus, Pencil, Plus, Share2, Trash2, X } from "lucide-react";
 import { ShareCode } from "@/components/onboarding/ShareCode";
 import { BottomSheet } from "@/components/ui/BottomSheet";
+import { DeloLink } from "@/components/brand/DeloLogo";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { createClient } from "@/lib/supabase/client";
 import { formatEUR } from "@/lib/gastos/money";
@@ -207,31 +208,44 @@ export function Dashboard({
   const iconButton =
     "relative flex size-10 items-center justify-center rounded-full border border-line bg-surface text-ink-soft transition active:scale-90";
 
+  const headerActions = (
+    <>
+      <button onClick={openAvisos} aria-label={unread ? `Novedades: ${unread} sin leer` : "Novedades"} className={iconButton}>
+        <Bell size={20} strokeWidth={1.75} />
+        {unread > 0 && (
+          <span className="absolute -right-0.5 -top-0.5 flex min-w-5 items-center justify-center rounded-full bg-hanko px-1 text-[11px] font-bold text-surface">
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
+      </button>
+      <button onClick={() => setSheet("compartir")} aria-label="Invitar a tu pareja" className={iconButton}>
+        <Share2 size={20} strokeWidth={1.75} />
+      </button>
+    </>
+  );
+
   return (
     <section className="max-w-[1500px]">
-      <PageHeader
-        title={
-          <span className="flex min-w-0 items-center gap-2 lg:gap-3">
-            <House className="size-5 shrink-0 text-forest lg:size-8" strokeWidth={1.75} aria-label="Hogar" />
-            <span className="truncate">{householdName}</span>
-          </span>
-        }
-        actions={
-          <>
-            <button onClick={openAvisos} aria-label={unread ? `Novedades: ${unread} sin leer` : "Novedades"} className={iconButton}>
-              <Bell size={20} strokeWidth={1.75} />
-              {unread > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 flex min-w-5 items-center justify-center rounded-full bg-hanko px-1 text-[11px] font-bold text-surface">
-                  {unread > 9 ? "9+" : unread}
-                </span>
-              )}
-            </button>
-            <button onClick={() => setSheet("compartir")} aria-label="Invitar a tu pareja" className={iconButton}>
-              <Share2 size={20} strokeWidth={1.75} />
-            </button>
-          </>
-        }
-      />
+      {/* Móvil: logo de quien creó la app a la izquierda, nombre del hogar al centro y avisos a la derecha */}
+      <header className="mb-2 grid min-h-11 grid-cols-[1fr_auto_1fr] items-center gap-2 lg:hidden">
+        <DeloLink className="flex min-h-11 items-center justify-start" logoClassName="w-[5.25rem]" />
+        <h1 className="flex min-w-0 max-w-[11rem] items-center justify-center gap-1.5 font-display text-lg font-bold leading-tight">
+          <House className="size-4 shrink-0 text-forest" strokeWidth={1.75} aria-label="Hogar" />
+          <span className="truncate">{householdName}</span>
+        </h1>
+        <div className="flex items-center justify-end gap-2">{headerActions}</div>
+      </header>
+      <div className="hidden lg:block">
+        <PageHeader
+          title={
+            <span className="flex min-w-0 items-center gap-3">
+              <House className="-translate-y-[1.5px] size-7 shrink-0 text-forest" strokeWidth={1.75} aria-label="Hogar" />
+              <span className="truncate">{householdName}</span>
+            </span>
+          }
+          actions={headerActions}
+        />
+      </div>
 
       <CuentasButton />
 

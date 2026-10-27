@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Compass, Download } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
+import { DeloLink } from "@/components/brand/DeloLogo";
 import { useProfile } from "@/components/profile/ProfileProvider";
 import { useInstall } from "@/components/pwa/InstallProvider";
 import { SignOutButton } from "./SignOutButton";
@@ -91,6 +92,10 @@ export function Sidebar() {
           Ver guía de la app
         </Link>
         <SignOutButton variant="row" />
+        <div className="mt-1 flex flex-col items-center gap-1 border-t border-line px-3 pt-3">
+          <span className="text-[10px] uppercase tracking-[0.2em] text-ink-soft">Creado por</span>
+          <DeloLink className="flex min-h-11 items-center rounded-lg opacity-90 transition hover:opacity-100" logoClassName="w-28" />
+        </div>
       </div>
     </aside>
   );

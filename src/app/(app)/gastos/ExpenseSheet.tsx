@@ -298,7 +298,7 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
 
       <div>
         <p className={label}>Categoría</p>
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="flex gap-2 chip-row">
           {EXPENSE_CATEGORIES.map((c) => {
             const selected = c.name === category;
             return (

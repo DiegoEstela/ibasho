@@ -3,13 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { CreditCard, Plus } from "lucide-react";
+import { CreditCard, Plus, Repeat } from "lucide-react";
 import { GastosTabs } from "@/components/ui/GastosTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { QueryErrorBanner } from "@/components/query/QueryErrorBanner";
 import { colorFor } from "@/lib/compras/icons";
 import { formatEUR, toCents } from "@/lib/gastos/money";
 import { createClient } from "@/lib/supabase/client";
+import { useFijos } from "@/lib/fijos/queries";
+import { amountCents, isDueIn, type Fixed, type FixedEntry } from "@/lib/fijos/schedule";
 import { tarjetasKey, useTarjetas } from "@/lib/tarjetas/queries";
 import { debitBalanceCents, type CardExpenseRow, type CardExpenseSplit, type DepositRow } from "@/lib/tarjetas/debit";
 import { isInstallmentPaid, projectByMonth, type InstallmentRow } from "@/lib/tarjetas/installments";
@@ -44,6 +46,9 @@ type Props = {
   initialSplits: CardExpenseSplit[];
   /** Usuario de cada participante de gastos, para saber de quién es cada parte. */
   participantUsers: Record<string, string>;
+  /** Pagos fijos y suscripciones (algunos se cargan a una tarjeta). */
+  initialFixeds: Fixed[];
+  initialEntries: FixedEntry[];
 };
 
 const todayISO = () => {
@@ -71,6 +76,8 @@ export function CardsView({
   participantNames,
   initialSplits,
   participantUsers,
+  initialFixeds,
+  initialEntries,
 }: Props) {
   const [supabase] = useState(() => createClient());
   const [today] = useState(todayISO);
@@ -91,6 +98,9 @@ export function CardsView({
     cardExpenses: initialCardExpenses,
     splits: initialSplits,
   });
+  const {
+    data: { fixeds, entries: fixedEntries },
+  } = useFijos(supabase, householdId, { fixeds: initialFixeds, entries: initialEntries });
   const [depositOpen, setDepositOpen] = useState(false);
   const [depositDetailId, setDepositDetailId] = useState<string | null>(null);
 
@@ -260,6 +270,38 @@ export function CardsView({
     [people, purchases, cardFilter, pendingOf, creditExpensesAll, expenseCents],
   );
 
+  /**
+   * Lo que se paga este mes por tarjeta: todas las cuotas que vencen este mes (ya pagadas o no)
+   * más los pagos fijos y suscripciones cargados a esa tarjeta que tocan este mes.
+   */
+  const monthlyByCard = useMemo(() => {
+    const map = new Map<string, { installments: number; fixed: number }>();
+    const slot = (id: string) => map.get(id) ?? { installments: 0, fixed: 0 };
+    const purchaseCard = new Map(purchases.map((p) => [p.id, p.card_id]));
+    for (const i of installments) {
+      const cardId = purchaseCard.get(i.purchase_id);
+      if (!cardId || i.due_date.slice(0, 7) !== currentMonth) continue;
+      const cur = slot(cardId);
+      map.set(cardId, { ...cur, installments: cur.installments + personCents(toCents(i.amount), sharesByPurchase.get(i.purchase_id) ?? {}, person) });
+    }
+    for (const f of fixeds) {
+      if (!f.card_id || !isDueIn(f, currentMonth)) continue;
+      const cents = amountCents(f, fixedEntries, currentMonth);
+      const cur = slot(f.card_id);
+      // Los pagos fijos se reparten a partes iguales entre las personas del hogar.
+      map.set(f.card_id, { ...cur, fixed: cur.fixed + (person && people.length > 1 ? Math.round(cents / people.length) : cents) });
+    }
+    return map;
+  }, [purchases, installments, fixeds, fixedEntries, currentMonth, sharesByPurchase, person, people.length]);
+
+  const monthlyRows = creditCards
+    .filter((c) => !cardFilter || c.id === cardFilter)
+    .map((card) => ({ card, ...(monthlyByCard.get(card.id) ?? { installments: 0, fixed: 0 }) }))
+    .filter((r) => r.installments + r.fixed > 0);
+  const monthlyInstallments = monthlyRows.reduce((s, r) => s + r.installments, 0);
+  const monthlyFixed = monthlyRows.reduce((s, r) => s + r.fixed, 0);
+  const cardFixeds = fixeds.filter((f) => f.card_id && (!cardFilter || f.card_id === cardFilter) && isDueIn(f, currentMonth));
+
   const projectionRows = useMemo<InstallmentRow[]>(() => {
     const ids = new Set(visiblePurchases.map((p) => p.id));
     return installments.filter((i) => ids.has(i.purchase_id)).map((i) => ({ ...i, amount: i.amount }));
@@ -394,7 +436,7 @@ export function CardsView({
         </div>
       ) : (
         <>
-          <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-3 pt-1 lg:mx-0 lg:px-0" role="list" aria-label="Tarjetas">
+          <div className="-mx-4 flex snap-x gap-3 no-scrollbar overflow-x-auto px-4 pb-3 pt-1 lg:mx-0 lg:px-0" role="list" aria-label="Tarjetas">
             {cards.map((card) => (
               <CardTile
                 key={card.id}
@@ -410,7 +452,7 @@ export function CardsView({
           </div>
 
           {people.length > 1 && !debitView && (
-            <div className="mb-3 flex items-center gap-2 overflow-x-auto" role="group" aria-label="Ver la parte de">
+            <div className="mb-3 flex items-center gap-2 chip-row" role="group" aria-label="Ver la parte de">
               <span className="shrink-0 text-xs text-ink-soft">Ver:</span>
               {[{ id: "", label: "Todo" }, ...(me ? [{ id: me.id, label: "Mi parte" }] : []), ...people.filter((p) => p.id !== userId).map((p) => ({ id: p.id, label: p.name }))].map(
                 (opt) => (
@@ -445,31 +487,64 @@ export function CardsView({
           ) : (
           <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:grid-rows-[auto_1fr] lg:gap-x-10">
             {/* Resumen */}
-            <div className="rounded-2xl border border-line bg-surface p-4 lg:col-start-2 lg:row-start-1 lg:p-5">
-              <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">
-                {person ? (person === userId ? "Te queda por pagar" : `Le queda a ${nameOf(person)}`) : "Queda por pagar"}
-              </p>
-              <p className="mt-1 font-display text-3xl font-bold">{formatEUR(totalPending)}</p>
-              <p className="text-xs text-ink-soft">
-                {activePurchases === 0 && creditExpenses.length === 0
-                  ? "No hay compras con cuotas pendientes"
-                  : `en ${[
-                      activePurchases > 0 ? `${activePurchases} ${activePurchases === 1 ? "compra" : "compras"} con cuotas pendientes` : null,
-                      creditExpenses.length > 0 ? `${creditExpenses.length} ${creditExpenses.length === 1 ? "gasto" : "gastos"} con la tarjeta` : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" y ")}`}
-              </p>
+            <div className="rounded-2xl border border-line bg-surface px-3.5 py-3 lg:col-start-2 lg:row-start-1 lg:p-5">
+              <div className={`grid gap-x-4 ${monthlyRows.length > 0 || cardFixeds.length > 0 ? "grid-cols-2 lg:grid-cols-1 lg:gap-y-3" : ""}`}>
+                <div className="min-w-0 text-center lg:text-left">
+                  <p className="truncate text-[11px] font-medium uppercase tracking-wider text-ink-soft lg:text-xs">
+                    {person ? (person === userId ? "Te queda por pagar" : `Le queda a ${nameOf(person)}`) : "Queda por pagar"}
+                  </p>
+                  <p className="font-display text-2xl font-bold leading-tight lg:mt-1 lg:text-3xl">{formatEUR(totalPending)}</p>
+                  <p className="truncate text-[11px] text-ink-soft lg:text-xs">
+                    {activePurchases === 0 && creditExpenses.length === 0
+                      ? "Sin cuotas pendientes"
+                      : [
+                          activePurchases > 0 ? `${activePurchases} ${activePurchases === 1 ? "compra" : "compras"}` : null,
+                          creditExpenses.length > 0 ? `${creditExpenses.length} ${creditExpenses.length === 1 ? "gasto" : "gastos"}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" y ")}
+                  </p>
+                </div>
+
+                {(monthlyRows.length > 0 || cardFixeds.length > 0) && (
+                  <div className="min-w-0 border-l border-line pl-4 text-center lg:text-left lg:border-l-0 lg:border-t lg:pl-0 lg:pt-3">
+                    <p className="truncate text-[11px] font-medium uppercase tracking-wider text-ink-soft lg:text-xs">{monthName(currentMonth).split(" ")[0]} · a pagar</p>
+                    <p className="font-display text-2xl font-bold leading-tight">{formatEUR(monthlyInstallments + monthlyFixed)}</p>
+                    <p className="truncate text-[11px] text-ink-soft lg:text-xs">
+                      {formatEUR(monthlyInstallments)} cuotas{monthlyFixed > 0 ? ` + ${formatEUR(monthlyFixed)} fijos` : ""}
+                    </p>
+                  </div>
+                )}
+              </div>
 
               {people.length > 1 && pendingByPerson.some((x) => x.cents > 0) && (
-                <ul className="mt-3 flex flex-wrap gap-2">
+                <ul className="mt-2 flex flex-wrap justify-center gap-1.5 lg:mt-3 lg:justify-start lg:gap-2">
                   {pendingByPerson.map(({ person: p, cents }) => (
-                    <li key={p.id} className="flex items-center gap-2 rounded-full bg-background px-3 py-1.5 text-xs">
-                      <span className="size-2.5 rounded-full" style={{ background: p.color }} />
+                    <li key={p.id} className="flex items-center gap-1.5 rounded-full bg-background px-2.5 py-1 text-xs">
+                      <span className="size-2 rounded-full" style={{ background: p.color }} />
                       {nameOf(p.id)} <span className="font-medium">{formatEUR(cents)}</span>
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {monthlyRows.length > 0 && (
+                <ul className="mt-2 flex flex-col gap-0.5 border-t border-line pt-2 lg:mt-3 lg:pt-3">
+                  {monthlyRows.map(({ card, installments: inst, fixed: fx }) => (
+                    <li key={card.id} className="flex items-center justify-between gap-2 text-[13px] lg:text-sm">
+                      <span className="min-w-0 truncate">
+                        {card.name}
+                        {card.closing_day ? <span className="text-xs text-ink-soft"> · cierra el {card.closing_day}</span> : null}
+                      </span>
+                      <span className="shrink-0 font-medium">{formatEUR(inst + fx)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {cardFixeds.length > 0 && (
+                <Link href="/gastos/fijos" className="flex min-h-9 items-center gap-1.5 text-xs font-medium text-forest">
+                  <Repeat size={14} /> {cardFixeds.length} {cardFixeds.length === 1 ? "pago fijo" : "pagos fijos"} en esta tarjeta · ver
+                </Link>
               )}
             </div>
 

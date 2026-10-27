@@ -164,7 +164,7 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
 
       {/* Período */}
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex gap-1 overflow-x-auto rounded-xl bg-washi-deep p-1" role="tablist" aria-label="Período">
+        <div className="flex gap-1 no-scrollbar overflow-x-auto rounded-xl bg-washi-deep p-1" role="tablist" aria-label="Período">
           {PERIODS.map((p) => (
             <button
               key={p.mode}
@@ -317,7 +317,7 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
             </select>
           </div>
         </div>
-        <div className="mb-3 flex gap-2 overflow-x-auto" role="group" aria-label="Tipo de movimiento">
+        <div className="mb-3 flex gap-2 chip-row" role="group" aria-label="Tipo de movimiento">
           {KIND_FILTERS.map((k) => (
             <button
               key={k.value || "todo"}

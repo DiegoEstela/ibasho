@@ -197,3 +197,31 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .petal-once { display: none; }
 }
+
+/* Filas de etiquetas con desplazamiento horizontal: sin barra de scroll pegada a las etiquetas,
+   con aire arriba y abajo (para que no se corten las sombras) y un difuminado a la derecha que avisa de que hay más. */
+@layer components {
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .chip-row {
+    overflow-x: auto;
+    padding-block: 4px;
+    padding-inline-end: 28px;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    overscroll-behavior-x: contain;
+  }
+  .chip-row::-webkit-scrollbar {
+    display: none;
+  }
+  @media (max-width: 1023.98px) {
+    .chip-row {
+      mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    }
+  }
+}
