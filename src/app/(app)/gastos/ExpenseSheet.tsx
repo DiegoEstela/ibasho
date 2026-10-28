@@ -189,19 +189,25 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
     e.preventDefault();
     setError("");
     if (!description.trim()) return setError("Escribe en qué fue el gasto.");
-    if (!creditPending && !sharedCard && !paidBy) return setError("Elige quién pagó el gasto.");
+    if (!sharedCard && !paidBy) return setError("Elige quién pagó el gasto.");
     if (foreign && !rate) return setError("Escribe la cotización: cuántas unidades de esa moneda equivalen a 1 euro.");
     if (!amount || amount <= 0) return setError("Escribe un importe válido, por ejemplo 12,50.");
 
+    const result = buildSplits();
+    if (typeof result === "string") return setError(result);
+
     if (creditPending && card) {
-      // Titular de la tarjeta, o a partes iguales entre las personas con cuenta si es compartida (los invitados de un viaje no tienen).
-      const users = participants.filter((p) => p.user_id).map((p) => p.user_id as string);
-      const owner = card.owner_user_id && users.includes(card.owner_user_id) ? card.owner_user_id : null;
-      const even = evenPercents(users);
-      const shares = owner
-        ? [{ user_id: owner, percent: 100 }]
-        : users.map((user_id) => ({ user_id, percent: Number((even[user_id] ?? "").replace(",", ".")) || 0 })).filter((x) => x.percent > 0);
-      if (shares.length === 0) return setError("No se pudo saber a quién corresponde la compra.");
+      // Lo que se vea por persona con cuenta alimenta el reparto de la tarjeta; el reparto completo (con invitados) va aparte.
+      const byUser = participants.filter((p) => p.user_id && (result[p.id] ?? 0) > 0);
+      const userTotal = byUser.reduce((sum, p) => sum + result[p.id], 0);
+      const shares = byUser.map((p, i) => {
+        const percent = Math.round((result[p.id] / userTotal) * 10000) / 100;
+        return { user_id: p.user_id as string, percent, last: i === byUser.length - 1 };
+      });
+      // El redondeo se lo lleva la última persona para que sumen 100.
+      const others = shares.filter((x) => !x.last).reduce((sum, x) => sum + x.percent, 0);
+      const fixed = shares.map(({ user_id, percent, last }) => ({ user_id, percent: last ? Math.round((100 - others) * 100) / 100 : percent }));
+      if (fixed.length === 0) return setError("Reparte el gasto al menos entre una persona con cuenta.");
 
       const rows = buildInstallments({ purchaseDate: date, totalCents, interestPercent: 0, count: installments, closingDay: card.closing_day, dueDay: card.due_day ?? 1 });
       setBusy(true);
@@ -215,10 +221,11 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
           p_interest: 0,
           p_count: installments,
           p_notes: foreign && typed ? `Importe original: ${formatMoney(typed, currency)}` : null,
-          p_shares: shares,
+          p_shares: fixed,
           p_installments: rows.map((r) => ({ number: r.number, due_date: r.due_date, amount: r.cents / 100 })),
           p_trip: tripId ?? null,
           p_category: category,
+          p_split: { paid_by: forcedPool ? null : paidBy || null, parts: result },
         });
         if (rpcError) throw new Error(rpcError.message);
       } catch {
@@ -230,9 +237,6 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
       onSaved();
       return;
     }
-
-    const result = buildSplits();
-    if (typeof result === "string") return setError(result);
 
     try {
       await save.mutateAsync({
@@ -389,10 +393,10 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
         )}
       </div>
 
-      {creditPending ? (
+      {creditPending && (
         <div className="rounded-xl bg-moss/15 px-3.5 py-3 text-sm text-forest">
           <p>
-            Queda en la tarjeta como <span className="font-medium">sin pagar</span>. Cuando se cobre, márcalo como pagado en Tarjetas y, si quieres repartirlo, pásalo a Gastos desde ahí.
+            Queda en la tarjeta como <span className="font-medium">sin pagar</span>. Cuando se cobre, márcalo como pagado en Tarjetas y pásalo a Gastos: se repartirá como lo dejes abajo.
           </p>
           <label className={`${label} mt-3`} htmlFor="g-cuotas">Cuotas</label>
           <select id="g-cuotas" className={field} value={installments} onChange={(e) => setInstallments(Number(e.target.value))}>
@@ -401,7 +405,9 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
             ))}
           </select>
         </div>
-      ) : forcedPool ? (
+      )}
+
+      {forcedPool ? (
         <p className="rounded-xl bg-moss/15 px-3.5 py-3 text-sm text-forest">
           Pagado con la tarjeta compartida: sale del dinero de los dos, así que no crea deudas entre ustedes.
         </p>
@@ -419,7 +425,6 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
         </div>
       )}
 
-      {!creditPending && (
       <div>
         <p className={label}>Dividir</p>
         <div className="flex gap-1 rounded-xl bg-washi-deep p-1" role="tablist" aria-label="Forma de dividir">
@@ -501,7 +506,6 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
           </p>
         )}
       </div>
-      )}
 
       {error && (
         <p role="alert" className="rounded-xl bg-hanko/10 px-4 py-3 text-sm text-hanko">

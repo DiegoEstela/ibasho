@@ -9,9 +9,13 @@ import { requireHousehold } from "@/lib/household";
 
 type Result = { ok: true } | { ok: false; message: string };
 
+/** Reparto elegido al crear el gasto: quién pagó y cuántos céntimos de la compra le tocan a cada participante. */
+type SplitPlan = { paid_by: string | null; parts: Record<string, number> };
+
 type PurchaseInfo = {
   card_id: string;
   trip_id: string | null;
+  split_plan: SplitPlan | null;
   description: string;
   merchant: string | null;
   installments_count: number;
@@ -33,7 +37,7 @@ export async function sendInstallmentToExpenses(installmentId: string, category:
   const { data: installment } = await supabase
     .from("card_installments")
     .select(
-      "id, purchase_id, number, amount, expense_id, manual_paid, card_purchases(card_id, trip_id, description, merchant, installments_count, total_amount, interest_percent, cards(name, last4, owner_user_id))",
+      "id, purchase_id, number, amount, expense_id, manual_paid, card_purchases(card_id, trip_id, split_plan, description, merchant, installments_count, total_amount, interest_percent, cards(name, last4, owner_user_id))",
     )
     .eq("id", installmentId)
     .maybeSingle();
@@ -80,13 +84,23 @@ export async function sendInstallmentToExpenses(installmentId: string, category:
 
   // Quien pagó es el titular de la tarjeta. Si la tarjeta es compartida no hay un pagador: sale del dinero de los dos.
   const ownerId = purchase.cards?.owner_user_id ?? null;
-  const payer = ownerId ? (participantOf(ownerId) ?? participantOf(user.id)) : null;
+  let payer = ownerId ? (participantOf(ownerId) ?? participantOf(user.id)) : null;
   if (ownerId && !payer) return { ok: false, message: "No se encontró a quien pagó la compra." };
 
   const percents: Record<string, number> = {};
   for (const s of shares ?? []) {
     const participant = participantOf(s.user_id);
     if (participant && Number(s.percent) > 0) percents[participant.id] = Number(s.percent);
+  }
+
+  // Si al crear el gasto se eligió un reparto propio (también con invitados), se usa ese mismo reparto y ese pagador.
+  const plan = purchase.split_plan;
+  const planTotal = plan ? Object.values(plan.parts).reduce((sum, c) => sum + c, 0) : 0;
+  const known = (id: string) => synced.participants.some((p) => p.id === id);
+  if (plan && planTotal > 0 && Object.keys(plan.parts).every(known) && (!plan.paid_by || known(plan.paid_by))) {
+    for (const id of Object.keys(percents)) delete percents[id];
+    for (const [id, c] of Object.entries(plan.parts)) if (c > 0) percents[id] = (c / planTotal) * 100;
+    payer = plan.paid_by ? (synced.participants.find((p) => p.id === plan.paid_by) ?? null) : null;
   }
   if (Object.keys(percents).length === 0) return { ok: false, message: "La compra no tiene reparto." };
 

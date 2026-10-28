@@ -44,6 +44,24 @@ type HistoryRow =
 const POOL = "__pool";
 
 const monthOf = (iso: string) => iso.slice(0, 7);
+
+/** «Hoy», «Ayer» o «lunes, 27 de octubre» (con el año si no es el actual). Sin pasar la fecha por zonas horarias. */
+function dayLabel(iso: string): string {
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date());
+  const [y, m, d] = iso.split("-").map(Number);
+  const [ty, tm, td] = today.split("-").map(Number);
+  const diff = Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(y, m - 1, d)) / 86400000);
+  if (diff === 0) return "Hoy";
+  if (diff === 1) return "Ayer";
+  const text = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("es-ES", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    ...(y !== ty ? { year: "numeric" as const } : {}),
+    timeZone: "UTC",
+  });
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 const monthLabel = (ym: string) => {
   const [y, m] = ym.split("-").map(Number);
   const text = new Date(y, m - 1, 1).toLocaleDateString("es-ES", { month: "long", year: "numeric" });
@@ -211,6 +229,21 @@ export function ExpensesView({
     }
     return rows.sort((a, b) => b.date.localeCompare(a.date) || b.created.localeCompare(a.created));
   }, [visibleExpenses, settlements, deposits, participants, monthFilter, categoryFilter, personFilter, cardFilter]);
+
+  /** El historial por días (más reciente arriba), con lo gastado cada día en el encabezado. */
+  const days = useMemo(() => {
+    const out: { date: string; rows: HistoryRow[]; totalCents: number }[] = [];
+    for (const row of history) {
+      let day = out[out.length - 1];
+      if (!day || day.date !== row.date) {
+        day = { date: row.date, rows: [], totalCents: 0 };
+        out.push(day);
+      }
+      day.rows.push(row);
+      if (row.kind === "expense") day.totalCents += toCents(row.expense.amount);
+    }
+    return out;
+  }, [history]);
 
   /** Cuánto puso y cuánto le corresponde a cada persona, para ver las cuentas de un vistazo. */
   const perPerson = useMemo(() => {
@@ -418,8 +451,15 @@ export function ExpensesView({
               )}
             </div>
           ) : (
+            <div className="flex flex-col gap-3">
+              {days.map((day) => (
+            <section key={day.date}>
+              <div className="mb-1 flex items-baseline justify-between gap-3 px-1">
+                <h3 className="text-xs font-medium uppercase tracking-wider text-ink-soft">{dayLabel(day.date)}</h3>
+                {day.totalCents > 0 && <p className="text-xs text-ink-soft">{formatEUR(day.totalCents)}</p>}
+              </div>
             <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
-              {history.map((row) =>
+              {day.rows.map((row) =>
                 row.kind === "deposit" ? (
                   <DepositItem
                     key={row.key}
@@ -441,13 +481,15 @@ export function ExpensesView({
                   <SettlementItem
                     key={row.key}
                     text={`${nameOf(row.settlement.from_participant)} pagó a ${nameOf(row.settlement.to_participant)}`}
-                    date={row.settlement.settled_on}
                     amount={row.settlement.amount}
                     onOpen={() => setSettlementDetail(row.settlement)}
                   />
                 ),
               )}
             </ul>
+            </section>
+              ))}
+            </div>
           )}
         </div>
 
@@ -641,7 +683,7 @@ export function ExpensesView({
 
 const rowButton = "flex min-h-12 w-full items-center gap-2.5 px-3 py-1.5 text-left";
 
-function SettlementItem({ text, date, amount, onOpen }: { text: string; date: string; amount: number; onOpen: () => void }) {
+function SettlementItem({ text, amount, onOpen }: { text: string; amount: number; onOpen: () => void }) {
   return (
     <li>
       <button onClick={onOpen} className={rowButton}>
@@ -650,7 +692,7 @@ function SettlementItem({ text, date, amount, onOpen }: { text: string; date: st
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm">{text}</span>
-          <span className="block text-[11px] text-ink-soft">Pago · {formatDate(date)}</span>
+          <span className="block text-[11px] text-ink-soft">Pago</span>
         </span>
         <span className="text-sm font-medium text-forest">{formatEUR(toCents(amount))}</span>
       </button>
@@ -668,7 +710,7 @@ function DepositItem({ deposit, cardName, by, onOpen }: { deposit: DepositRow; c
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm">{deposit.note?.trim() || "Ingreso"} · {cardName}</span>
           <span className="block text-[11px] text-ink-soft">
-            Puso {by} · {formatDate(deposit.deposit_date)}
+            Puso {by}
           </span>
         </span>
         <span className="text-sm font-medium text-forest">+{formatEUR(toCents(deposit.amount))}</span>
@@ -701,7 +743,7 @@ function ExpenseItem({
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm">{expense.description}</span>
           <span className="block truncate text-[11px] text-ink-soft">
-            {[expense.paid_by ? `Pagó ${payer}` : cardText ? null : "Cuenta compartida", cardText, formatDate(expense.expense_date)]
+            {[expense.paid_by ? `Pagó ${payer}` : cardText ? null : "Cuenta compartida", cardText]
               .filter(Boolean)
               .join(" · ")}
           </span>

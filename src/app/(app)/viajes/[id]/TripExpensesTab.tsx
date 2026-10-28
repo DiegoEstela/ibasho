@@ -45,6 +45,9 @@ type PendingPurchase = {
   count: number;
   paid: number;
   inExpenses: number;
+  category: string;
+  /** Lo que aún no se pasó a gastos del viaje: sigue contando para el presupuesto. */
+  unsentCents: number;
 };
 
 type HistoryRow =
@@ -80,13 +83,13 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
       // Compras con tarjeta de crédito de este viaje: viven en Tarjetas hasta que se pasan a Gastos.
       const purchases = await supabase
         .from("card_purchases")
-        .select("id, description, card_id, total_amount, interest_percent, installments_count")
+        .select("id, description, card_id, total_amount, interest_percent, installments_count, category")
         .eq("trip_id", trip.id)
         .order("purchase_date", { ascending: false });
       if (purchases.error) return { error: `${purchases.error.code}: ${purchases.error.message}` } as const;
       const purchaseIds = (purchases.data ?? []).map((p) => p.id as string);
       const insts = purchaseIds.length
-        ? await supabase.from("card_installments").select("purchase_id, manual_paid, expense_id").in("purchase_id", purchaseIds)
+        ? await supabase.from("card_installments").select("purchase_id, manual_paid, expense_id, amount").in("purchase_id", purchaseIds)
         : { data: [], error: null };
       if (insts.error) return { error: `${insts.error.code}: ${insts.error.message}` } as const;
       const pending = (purchases.data ?? [])
@@ -100,6 +103,8 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
             count: Number(p.installments_count),
             paid: mine.filter((i) => i.manual_paid === true).length,
             inExpenses: mine.filter((i) => i.expense_id).length,
+            category: (p.category as string | null) ?? "Otros",
+            unsentCents: mine.filter((i) => !i.expense_id).reduce((sum, i) => sum + toCents(Number(i.amount)), 0),
           };
         })
         .filter((p) => p.inExpenses < p.count);
@@ -218,12 +223,16 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
     return used;
   }, [expenses, splits, settlements]);
 
-  const total = expenses.reduce((s, e) => s + toCents(e.amount), 0);
+  // Presupuesto del viaje: lo ya repartido en gastos más lo que está en tarjeta de crédito, esté pagado o no.
+  const pending = useMemo(() => data?.pending ?? [], [data]);
+  const pendingCents = pending.reduce((s, p) => s + p.unsentCents, 0);
+  const total = expenses.reduce((s, e) => s + toCents(e.amount), 0) + pendingCents;
   const categories = useMemo(() => {
     const map = new Map<string, number>();
     for (const e of expenses) map.set(e.category, (map.get(e.category) ?? 0) + toCents(e.amount));
+    for (const p of pending) map.set(p.category, (map.get(p.category) ?? 0) + p.unsentCents);
     return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
-  }, [expenses]);
+  }, [expenses, pending]);
 
   const history = useMemo<HistoryRow[]>(() => {
     const rows: HistoryRow[] = [
@@ -389,9 +398,12 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
           <div className={card}>
             <div className="flex items-baseline justify-between gap-3">
               <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">Total del viaje</p>
-              <p className="text-xs text-ink-soft">{expenses.length} {expenses.length === 1 ? "gasto" : "gastos"}</p>
+              <p className="text-xs text-ink-soft">{expenses.length + pending.length} {expenses.length + pending.length === 1 ? "gasto" : "gastos"}</p>
             </div>
             <p className="mt-1 font-display text-2xl font-bold">{formatEUR(total)}</p>
+            {pendingCents > 0 && (
+              <p className="text-xs text-ink-soft">Incluye {formatEUR(pendingCents)} en tarjeta de crédito aún sin pasar a gastos</p>
+            )}
             {categories.length > 0 && (
               <ul className="mt-3 flex flex-col gap-2">
                 {categories.map(([name, cents]) => {
@@ -446,7 +458,7 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
                 ))}
               </ul>
               <p className="mt-1.5 px-1 text-xs text-ink-soft">
-                No cuentan en el balance del viaje hasta que los pases a Gastos desde Tarjetas.
+                Suman al total del viaje, pero no entran en el balance hasta que los pases a Gastos desde Tarjetas.
               </p>
             </div>
           )}
