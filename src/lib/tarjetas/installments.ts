@@ -56,9 +56,9 @@ export function buildInstallments(params: {
   return ids.map((id, i) => ({ number: i + 1, due_date: dateIn(fy, fm + i, dueDay), cents: amounts[id] }));
 }
 
-/** Una cuota cuenta como pagada si se marcó a mano; si no, cuando llega su fecha. */
-export function isInstallmentPaid(manualPaid: boolean | null, dueDate: string, today: string): boolean {
-  return manualPaid ?? dueDate <= today;
+/** Una cuota solo cuenta como pagada cuando tú la marcas: la fecha de cobro del banco no se da por hecha. */
+export function isInstallmentPaid(manualPaid: boolean | null): boolean {
+  return manualPaid === true;
 }
 
 /** Cuánto le toca a cada persona de una cuota, según los porcentajes de la compra (suma exacta). */
@@ -87,7 +87,7 @@ export function projectByMonth(
   for (let i = 0; i < months; i++) buckets.set(dateIn(cy, cm + i, 1).slice(0, 7), 0);
 
   for (const row of rows) {
-    if (isInstallmentPaid(row.manual_paid, row.due_date, today)) continue;
+    if (isInstallmentPaid(row.manual_paid)) continue;
     const month = row.due_date.slice(0, 7) < currentMonth ? currentMonth : row.due_date.slice(0, 7);
     if (buckets.has(month)) buckets.set(month, (buckets.get(month) ?? 0) + amountFor(row));
   }

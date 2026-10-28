@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Receipt, RotateCcw, Trash2 } from "lucide-react";
+import { Check, Receipt, Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { formatEUR, toCents } from "@/lib/gastos/money";
 import { isInstallmentPaid } from "@/lib/tarjetas/installments";
@@ -22,7 +22,6 @@ type Props = {
   notice: string;
   onClose: () => void;
   onToggle: (installment: Installment, paid: boolean) => void;
-  onAuto: (installment: Installment) => void;
   onDelete: (purchase: Purchase) => void;
   onRequestSend: (installment: Installment) => void;
 };
@@ -46,13 +45,12 @@ function Detail({
   alone,
   notice,
   onToggle,
-  onAuto,
   onDelete,
   onRequestSend,
 }: Props & { purchase: Purchase }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const sorted = [...installments].sort((a, b) => a.number - b.number);
-  const stats = purchaseStats(sorted, today);
+  const stats = purchaseStats(sorted);
   const total = toCents(purchase.total_amount * (1 + purchase.interest_percent / 100));
   const progress = stats.total === 0 ? 0 : (stats.paid / stats.total) * 100;
   const nameOf = (id: string) => people.find((p) => p.id === id)?.name ?? "Alguien";
@@ -96,7 +94,7 @@ function Detail({
         <h3 className="mb-1.5 px-1 text-xs font-medium uppercase tracking-wider text-ink-soft">Calendario de cuotas</h3>
         <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
           {sorted.map((inst) => {
-            const paid = isInstallmentPaid(inst.manual_paid, inst.due_date, today);
+            const paid = isInstallmentPaid(inst.manual_paid);
             const overdue = !paid && inst.due_date < today;
             return (
               <li key={inst.id} className="flex min-h-12 items-center gap-1 pr-2">
@@ -120,19 +118,8 @@ function Detail({
                   </p>
                   <p className="text-xs text-ink-soft">
                     {overdue ? <span className="text-hanko">Atrasada</span> : paid ? "Pagada" : "Pendiente"}
-                    {inst.manual_paid !== null && " · ajustada a mano"}
                   </p>
                 </div>
-                {inst.manual_paid !== null && (
-                  <button
-                    onClick={() => onAuto(inst)}
-                    aria-label="Volver al estado automático según la fecha"
-                    title="Volver a automático"
-                    className="flex size-9 items-center justify-center rounded-full text-ink-soft"
-                  >
-                    <RotateCcw size={15} />
-                  </button>
-                )}
                 <span className="text-[15px] font-medium">{formatEUR(toCents(inst.amount))}</span>
                 {inst.expense_id ? (
                   <span className="ml-1 flex min-h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium text-forest" title="Ya está en Gastos compartidos">
@@ -142,9 +129,9 @@ function Detail({
                   <button
                     onClick={() => onRequestSend(inst)}
                     aria-label={`Agregar la cuota ${inst.number} a Gastos compartidos`}
-                    aria-disabled={alone}
+                    aria-disabled={alone || !paid}
                     className={`ml-1 flex min-h-8 items-center gap-1 rounded-lg px-2.5 text-[11px] font-medium transition active:scale-95 ${
-                      alone ? "bg-washi-deep text-ink-soft" : "bg-forest/10 text-forest"
+                      alone || !paid ? "bg-washi-deep text-ink-soft" : "bg-forest/10 text-forest"
                     }`}
                   >
                     <Receipt size={13} /> Gastos
@@ -158,7 +145,7 @@ function Detail({
           <p role="alert" className="mt-2 rounded-xl bg-hanko/10 px-3 py-2.5 text-sm text-hanko">{notice}</p>
         )}
         <p className="mt-1.5 px-1 text-xs text-ink-soft">
-          Las cuotas se marcan como pagadas solas cuando llega su fecha; toca el círculo para corregirlo. Con «Gastos» registras esa cuota en Gastos compartidos.
+          Toca el círculo cuando se cobre la cuota. Después, con «Gastos», la registras en Gastos compartidos{purchase.trip_id ? " del viaje" : ""}.
         </p>
       </div>
 

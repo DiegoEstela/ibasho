@@ -165,20 +165,20 @@ export function CardsView({
 
   const statsByPurchase = useMemo(() => {
     const map = new Map<string, PurchaseStats>();
-    for (const p of purchases) map.set(p.id, purchaseStats(instByPurchase.get(p.id) ?? [], today));
+    for (const p of purchases) map.set(p.id, purchaseStats(instByPurchase.get(p.id) ?? []));
     return map;
-  }, [purchases, instByPurchase, today]);
+  }, [purchases, instByPurchase]);
 
   /** Lo que queda por pagar de una compra; con una persona elegida, solo su parte. */
   const pendingOf = useCallback(
     (purchaseId: string, personId: string) => {
       const sh = sharesByPurchase.get(purchaseId) ?? {};
       return (instByPurchase.get(purchaseId) ?? []).reduce(
-        (sum, i) => (isInstallmentPaid(i.manual_paid, i.due_date, today) ? sum : sum + personCents(toCents(i.amount), sh, personId)),
+        (sum, i) => (isInstallmentPaid(i.manual_paid) ? sum : sum + personCents(toCents(i.amount), sh, personId)),
         0,
       );
     },
-    [sharesByPurchase, instByPurchase, today],
+    [sharesByPurchase, instByPurchase],
   );
 
   const visiblePurchases = useMemo(
@@ -318,14 +318,14 @@ export function CardsView({
     if (!month) return [];
     return projectionRows
       .filter((r) => {
-        if (isInstallmentPaid(r.manual_paid, r.due_date, today)) return false;
+        if (isInstallmentPaid(r.manual_paid)) return false;
         const bucket = r.due_date.slice(0, 7) < currentMonth ? currentMonth : r.due_date.slice(0, 7);
         return bucket === month;
       })
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
       .map((r) => ({ row: r, purchase: purchases.find((p) => p.id === r.purchase_id), cents: amountFor(r) }))
       .filter((x) => x.purchase && x.cents > 0);
-  }, [month, projectionRows, today, currentMonth, purchases, amountFor]);
+  }, [month, projectionRows, currentMonth, purchases, amountFor]);
 
   const sendInstallment = installments.find((i) => i.id === sendInstallmentId);
   const sendPurchase = purchases.find((p) => p.id === sendInstallment?.purchase_id);
@@ -346,7 +346,7 @@ export function CardsView({
     },
   });
 
-  function setPaid(inst: Installment, value: boolean | null) {
+  function setPaid(inst: Installment, value: boolean) {
     patch((d) => ({ installments: d.installments.map((i) => (i.id === inst.id ? { ...i, manual_paid: value } : i)) }));
     write.mutate(() => supabase.from("card_installments").update({ manual_paid: value }).eq("id", inst.id));
   }
@@ -365,8 +365,14 @@ export function CardsView({
 
   function requestSend(installment: Installment) {
     setSendMessage("");
-    // Con una sola persona en el hogar no hay con quién compartir el gasto: se explica en vez de ocultar la opción.
-    if (people.length < 2) {
+    // El circuito es: crear → marcar pagada → pasar a Gastos.
+    if (!isInstallmentPaid(installment.manual_paid)) {
+      setDetailNotice("Marca primero la cuota como pagada y luego pásala a Gastos.");
+      return;
+    }
+    const fromTrip = !!purchases.find((p) => p.id === installment.purchase_id)?.trip_id;
+    // Con una sola persona en el hogar no hay con quién compartir el gasto (un viaje sí puede tener invitados): se explica en vez de ocultar la opción.
+    if (people.length < 2 && !fromTrip) {
       setDetailNotice("Esta opción estará disponible cuando tu pareja se una al hogar.");
       return;
     }
@@ -374,12 +380,12 @@ export function CardsView({
     setSendInstallmentId(installment.id);
   }
 
-  async function confirmSend(category: string, date: string) {
+  async function confirmSend(category: string) {
     if (!sendInstallmentId) return;
     const installment = installments.find((i) => i.id === sendInstallmentId);
     setSending(true);
     setSendMessage("");
-    const result = await sendInstallmentToExpenses(sendInstallmentId, category, date);
+    const result = await sendInstallmentToExpenses(sendInstallmentId, category);
     setSending(false);
     if (!result.ok) return setSendMessage(result.message);
     setSendInstallmentId(null);
@@ -731,11 +737,10 @@ export function CardsView({
         shares={detailShares}
         installments={installments.filter((i) => i.purchase_id === detailId)}
         today={today}
-        alone={people.length < 2}
+        alone={people.length < 2 && !detail?.trip_id}
         notice={detailNotice}
         onClose={() => setDetailId(null)}
         onToggle={(inst, paid) => setPaid(inst, paid)}
-        onAuto={(inst) => setPaid(inst, null)}
         onDelete={removePurchase}
         onRequestSend={requestSend}
       />
@@ -747,7 +752,6 @@ export function CardsView({
         people={people}
         shares={shares.filter((s) => s.purchase_id === sendPurchase?.id)}
         userId={userId}
-        today={today}
         sending={sending}
         message={sendMessage}
         onClose={() => setSendInstallmentId(null)}

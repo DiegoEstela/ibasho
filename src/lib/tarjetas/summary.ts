@@ -15,7 +15,7 @@ export type PurchaseStats = {
 const toCents = (amount: number) => Math.round(amount * 100);
 
 /** Cuántas cuotas van pagadas, cuántas faltan, cuánto queda y cuándo es la próxima y la última. */
-export function purchaseStats(rows: InstRow[], today: string): PurchaseStats {
+export function purchaseStats(rows: InstRow[]): PurchaseStats {
   const sorted = [...rows].sort((a, b) => a.number - b.number);
   let paid = 0;
   let pendingCents = 0;
@@ -23,7 +23,7 @@ export function purchaseStats(rows: InstRow[], today: string): PurchaseStats {
   let lastDue: string | null = null;
 
   for (const r of sorted) {
-    if (isInstallmentPaid(r.manual_paid, r.due_date, today)) paid++;
+    if (isInstallmentPaid(r.manual_paid)) paid++;
     else {
       pendingCents += toCents(r.amount);
       if (!nextDue) nextDue = r.due_date;

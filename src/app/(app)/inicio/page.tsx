@@ -95,7 +95,7 @@ async function Resumen() {
   let nextCents = 0;
   const allInstallments = (cInstallments.data ?? []) as { purchase_id: string; due_date: string; amount: number; manual_paid: boolean | null }[];
   for (const i of allInstallments) {
-    if (isInstallmentPaid(i.manual_paid, i.due_date, today)) continue;
+    if (isInstallmentPaid(i.manual_paid)) continue;
     const mine = personCents(toCents(Number(i.amount)), sharesOf.get(i.purchase_id) ?? {}, user.id);
     if (mine <= 0) continue;
     cardPending += mine;

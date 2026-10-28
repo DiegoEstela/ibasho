@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Banknote, Download, Plus, Trash2, Users } from "lucide-react";
+import Link from "next/link";
+import { Banknote, CreditCard, Download, Plus, Trash2, Users } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { CatIcon } from "@/components/ui/CatIcon";
 import { colorFor } from "@/lib/compras/icons";
@@ -32,6 +33,18 @@ type Loaded = {
   expenses: Expense[];
   splits: Split[];
   settlements: Settlement[];
+  pending: PendingPurchase[];
+};
+
+/** Compra del viaje pagada con tarjeta de crédito que aún no se pasó (del todo) a los gastos del viaje. */
+type PendingPurchase = {
+  id: string;
+  description: string;
+  card_id: string;
+  total: number;
+  count: number;
+  paid: number;
+  inExpenses: number;
 };
 
 type HistoryRow =
@@ -59,19 +72,47 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
         supabase.from("expenses").select("*").eq("group_id", groupId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
         supabase.from("expense_splits").select("expense_id, participant_id, amount, expenses!inner(group_id)").eq("expenses.group_id", groupId).limit(10000),
         supabase.from("settlements").select("*").eq("group_id", groupId).order("settled_on", { ascending: false }).limit(500),
-        supabase.from("cards").select("id, name, last4, kind, owner_user_id").eq("archived", false).order("created_at"),
+        supabase.from("cards").select("id, name, last4, kind, owner_user_id, closing_day, due_day").eq("archived", false).order("created_at"),
       ]);
       const failed = [participants, expenses, splits, settlements, cards].find((r) => r.error);
       if (failed?.error) return { error: `${failed.error.code}: ${failed.error.message}` } as const;
+
+      // Compras con tarjeta de crédito de este viaje: viven en Tarjetas hasta que se pasan a Gastos.
+      const purchases = await supabase
+        .from("card_purchases")
+        .select("id, description, card_id, total_amount, interest_percent, installments_count")
+        .eq("trip_id", trip.id)
+        .order("purchase_date", { ascending: false });
+      if (purchases.error) return { error: `${purchases.error.code}: ${purchases.error.message}` } as const;
+      const purchaseIds = (purchases.data ?? []).map((p) => p.id as string);
+      const insts = purchaseIds.length
+        ? await supabase.from("card_installments").select("purchase_id, manual_paid, expense_id").in("purchase_id", purchaseIds)
+        : { data: [], error: null };
+      if (insts.error) return { error: `${insts.error.code}: ${insts.error.message}` } as const;
+      const pending = (purchases.data ?? [])
+        .map<PendingPurchase>((p) => {
+          const mine = (insts.data ?? []).filter((i) => i.purchase_id === p.id);
+          return {
+            id: p.id as string,
+            description: p.description as string,
+            card_id: p.card_id as string,
+            total: toCents(Number(p.total_amount) * (1 + Number(p.interest_percent) / 100)),
+            count: Number(p.installments_count),
+            paid: mine.filter((i) => i.manual_paid === true).length,
+            inExpenses: mine.filter((i) => i.expense_id).length,
+          };
+        })
+        .filter((p) => p.inExpenses < p.count);
       return {
         participants: (participants.data ?? []) as Participant[],
         expenses: (expenses.data ?? []) as Expense[],
         splits: ((splits.data ?? []) as unknown as Split[]).map(({ expense_id, participant_id, amount }) => ({ expense_id, participant_id, amount })),
         settlements: (settlements.data ?? []) as Settlement[],
         cards: (cards.data ?? []) as PayCard[],
+        pending,
       } as const;
     },
-    [supabase],
+    [supabase, trip.id],
   );
 
   useEffect(() => {
@@ -125,6 +166,8 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
       .on("postgres_changes", { event: "*", schema: "public", table: "settlements", filter: `group_id=eq.${groupId}` }, queue)
       .on("postgres_changes", { event: "*", schema: "public", table: "expense_participants", filter: `group_id=eq.${groupId}` }, queue)
       .on("postgres_changes", { event: "*", schema: "public", table: "expense_splits", filter: `household_id=eq.${householdId}` }, queue)
+      .on("postgres_changes", { event: "*", schema: "public", table: "card_purchases", filter: `household_id=eq.${householdId}` }, queue)
+      .on("postgres_changes", { event: "*", schema: "public", table: "card_installments", filter: `household_id=eq.${householdId}` }, queue)
       .subscribe();
     const onVisible = () => document.visibilityState === "visible" && refetch();
     document.addEventListener("visibilitychange", onVisible);
@@ -374,6 +417,40 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
 
         {/* Historial */}
         <div className="lg:col-start-1 lg:row-start-1">
+          {data.pending.length > 0 && (
+            <div className="mb-4">
+              <p className="mb-1.5 px-1 text-xs font-medium uppercase tracking-wider text-ink-soft">
+                En tarjeta de crédito · {formatEUR(data.pending.reduce((s, p) => s + p.total, 0))}
+              </p>
+              <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+                {data.pending.map((p) => (
+                  <li key={p.id}>
+                    <Link href="/gastos/tarjetas" className="flex min-h-14 w-full items-center gap-3 px-3 py-2">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky/20 text-sky">
+                        <CreditCard size={18} strokeWidth={1.75} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[15px]">{p.description}</span>
+                        <span className="block truncate text-xs text-ink-soft">
+                          {[cardName(p.card_id), p.paid === p.count ? "Pagado" : "Sin pagar", p.inExpenses > 0 ? `${p.inExpenses} en gastos` : null]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <span className="text-right">
+                        <span className="block text-[15px] font-medium">{formatEUR(p.total)}</span>
+                        <span className="block text-[11px] text-ink-soft">{p.paid}/{p.count}</span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 px-1 text-xs text-ink-soft">
+                No cuentan en el balance del viaje hasta que los pases a Gastos desde Tarjetas.
+              </p>
+            </div>
+          )}
+
           {history.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-line bg-surface/60 p-6 text-center">
               <span className="text-4xl" aria-hidden>🧾</span>
@@ -449,6 +526,7 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
         meId={me.id}
         cards={cards}
         trip={{ currency: trip.currency }}
+        tripId={trip.id}
         expense={expenseSheet.expense}
         splits={splits}
         onSaved={onSaved}

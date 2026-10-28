@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
-import { ensureGroupId, syncParticipants } from "@/lib/gastos/setup";
+import { ensureGroupId, ensureTripGroup, syncParticipants } from "@/lib/gastos/setup";
 import { formatEUR, splitByPercent, toCents } from "@/lib/gastos/money";
 import { cardLabel } from "@/lib/tarjetas/labels";
 import { requireHousehold } from "@/lib/household";
@@ -11,6 +11,7 @@ type Result = { ok: true } | { ok: false; message: string };
 
 type PurchaseInfo = {
   card_id: string;
+  trip_id: string | null;
   description: string;
   merchant: string | null;
   installments_count: number;
@@ -22,21 +23,23 @@ type PurchaseInfo = {
 /**
  * Registra en Gastos compartidos UNA cuota de una compra con tarjeta, con todos sus datos:
  * el importe de esa cuota, el concepto («Televisor · cuota 3/12»), la tarjeta, quién pagó y el reparto de la compra.
+ * La fecha del gasto es la de hoy (el momento en que se pasa a Gastos). Si la compra viene de un viaje, cae en los gastos de ese viaje.
  */
-export async function sendInstallmentToExpenses(installmentId: string, category: string, date: string): Promise<Result> {
+export async function sendInstallmentToExpenses(installmentId: string, category: string): Promise<Result> {
   const { supabase, user, household } = await requireHousehold();
   const chosenCategory = EXPENSE_CATEGORIES.some((c) => c.name === category) ? category : "Otros";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, message: "La fecha no es válida." };
+  const date = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date());
 
   const { data: installment } = await supabase
     .from("card_installments")
     .select(
-      "id, purchase_id, number, amount, expense_id, card_purchases(card_id, description, merchant, installments_count, total_amount, interest_percent, cards(name, last4, owner_user_id))",
+      "id, purchase_id, number, amount, expense_id, manual_paid, card_purchases(card_id, trip_id, description, merchant, installments_count, total_amount, interest_percent, cards(name, last4, owner_user_id))",
     )
     .eq("id", installmentId)
     .maybeSingle();
   if (!installment) return { ok: false, message: "No encontramos esa cuota." };
   if (installment.expense_id) return { ok: false, message: "Esta cuota ya está en Gastos compartidos." };
+  if (installment.manual_paid !== true) return { ok: false, message: "Marca primero la cuota como pagada." };
 
   const purchase = installment.card_purchases as unknown as PurchaseInfo | null;
   if (!purchase) return { ok: false, message: "No encontramos la compra de esta cuota." };
@@ -48,14 +51,24 @@ export async function sendInstallmentToExpenses(installmentId: string, category:
     supabase.from("expense_groups").select("id").eq("kind", "household").maybeSingle(),
   ]);
 
-  if ((members?.length ?? 0) < 2) return { ok: false, message: "Los gastos compartidos necesitan a tu pareja dentro del hogar." };
-
-  const ensured = await ensureGroupId(supabase, household.id, group?.id as string | undefined);
-  if ("error" in ensured) return { ok: false, message: `No se pudo preparar Gastos (${ensured.error.step}).` };
+  let groupId: string;
+  if (purchase.trip_id) {
+    // Compra de un viaje: va al grupo de gastos de ese viaje (con sus invitados y su balance).
+    const { data: trip } = await supabase.from("trips").select("name").eq("id", purchase.trip_id).maybeSingle();
+    if (!trip) return { ok: false, message: "No encontramos el viaje de esta compra." };
+    const ensuredTrip = await ensureTripGroup(supabase, { householdId: household.id, tripId: purchase.trip_id, name: trip.name as string });
+    if ("error" in ensuredTrip) return { ok: false, message: `No se pudo preparar los gastos del viaje (${ensuredTrip.error.step}).` };
+    groupId = ensuredTrip.groupId;
+  } else {
+    if ((members?.length ?? 0) < 2) return { ok: false, message: "Los gastos compartidos necesitan a tu pareja dentro del hogar." };
+    const ensured = await ensureGroupId(supabase, household.id, group?.id as string | undefined);
+    if ("error" in ensured) return { ok: false, message: `No se pudo preparar Gastos (${ensured.error.step}).` };
+    groupId = ensured.groupId;
+  }
 
   const synced = await syncParticipants(supabase, {
     householdId: household.id,
-    groupId: ensured.groupId,
+    groupId,
     userId: user.id,
     email: user.email,
     members: members ?? [],
@@ -91,7 +104,7 @@ export async function sendInstallmentToExpenses(installmentId: string, category:
 
   const { data: expenseId, error } = await supabase.rpc("save_expense", {
     p_id: null,
-    p_group: ensured.groupId,
+    p_group: groupId,
     p_description: `${base} · ${label}`,
     p_amount: cents / 100,
     p_date: date,
@@ -112,5 +125,6 @@ export async function sendInstallmentToExpenses(installmentId: string, category:
   }
 
   revalidatePath("/gastos");
+  if (purchase.trip_id) revalidatePath(`/viajes/${purchase.trip_id}`);
   return { ok: true };
 }

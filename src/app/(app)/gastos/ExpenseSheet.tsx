@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
@@ -10,6 +10,7 @@ import { colorFor } from "@/lib/compras/icons";
 import { useProfile } from "@/components/profile/ProfileProvider";
 import { createClient } from "@/lib/supabase/client";
 import { notifyPartner } from "@/lib/push/client";
+import { buildInstallments } from "@/lib/tarjetas/installments";
 import { cardLabel } from "@/lib/tarjetas/labels";
 import type { Participant } from "@/lib/gastos/balance";
 import { EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
@@ -21,7 +22,7 @@ import { formatDate, type Expense, type Split } from "./types";
 type Mode = "equal" | "percent" | "exact";
 
 /** Lo mínimo de una tarjeta para elegirla al pagar. */
-export type PayCard = { id: string; name: string; last4: string | null; kind: "credit" | "debit"; owner_user_id: string | null };
+export type PayCard = { id: string; name: string; last4: string | null; kind: "credit" | "debit"; owner_user_id: string | null; closing_day: number | null; due_day: number | null };
 
 type Props = {
   open: boolean;
@@ -33,6 +34,8 @@ type Props = {
   cards: PayCard[];
   /** Solo en gastos de viaje: activa las otras monedas y oculta las tarjetas. `currency` es la del destino. */
   trip?: { currency: string } | null;
+  /** Solo en gastos de viaje: las compras con tarjeta de crédito quedan enlazadas a este viaje. */
+  tripId?: string;
   /** Gasto que se edita; null para crear uno nuevo. */
   expense: Expense | null;
   splits: Split[];
@@ -59,8 +62,9 @@ export function ExpenseSheet(props: Props) {
   );
 }
 
-function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits, onSaved, onDelete }: Props) {
+function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense, splits, onSaved, onDelete }: Props) {
   const profile = useProfile();
+  const queryClient = useQueryClient();
   const ids = participants.map((p) => p.id);
 
   // Si el gasto ya existe, deduce cómo se repartió para mostrarlo igual.
@@ -95,6 +99,7 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
   const [included, setIncluded] = useState<Set<string>>(initial.included);
   const [percents, setPercents] = useState<Record<string, string>>(() => evenPercents(ids));
   const [exacts, setExacts] = useState<Record<string, string>>(initial.exacts);
+  const [installments, setInstallments] = useState(1);
   const [error, setError] = useState("");
   // El error se muestra dentro del formulario (silent); al guardar, React Query actualiza las pantallas abiertas.
   const save = useMutation({
@@ -104,9 +109,12 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
     },
     meta: { silent: true },
   });
-  const saving = save.isPending;
+  const [busy, setBusy] = useState(false);
+  const saving = save.isPending || busy;
 
   const card = cards.find((c) => c.id === cardId);
+  // Un gasto nuevo con tarjeta de crédito no entra en Gastos: queda en la tarjeta, sin pagar, hasta que lo pases a Gastos desde allí.
+  const creditPending = !expense && card?.kind === "credit";
   // Una tarjeta sin titular es de los dos: el dinero sale de la cuenta común y no hay un "pagador".
   const sharedCard = !!card && card.owner_user_id === null;
   // En el hogar (dos personas) una tarjeta compartida nunca tiene pagador; en un viaje, con amigos de por medio, se puede elegir.
@@ -181,9 +189,47 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
     e.preventDefault();
     setError("");
     if (!description.trim()) return setError("Escribe en qué fue el gasto.");
-    if (!sharedCard && !paidBy) return setError("Elige quién pagó el gasto.");
+    if (!creditPending && !sharedCard && !paidBy) return setError("Elige quién pagó el gasto.");
     if (foreign && !rate) return setError("Escribe la cotización: cuántas unidades de esa moneda equivalen a 1 euro.");
     if (!amount || amount <= 0) return setError("Escribe un importe válido, por ejemplo 12,50.");
+
+    if (creditPending && card) {
+      // Titular de la tarjeta, o a partes iguales entre las personas con cuenta si es compartida (los invitados de un viaje no tienen).
+      const users = participants.filter((p) => p.user_id).map((p) => p.user_id as string);
+      const owner = card.owner_user_id && users.includes(card.owner_user_id) ? card.owner_user_id : null;
+      const even = evenPercents(users);
+      const shares = owner
+        ? [{ user_id: owner, percent: 100 }]
+        : users.map((user_id) => ({ user_id, percent: Number((even[user_id] ?? "").replace(",", ".")) || 0 })).filter((x) => x.percent > 0);
+      if (shares.length === 0) return setError("No se pudo saber a quién corresponde la compra.");
+
+      const rows = buildInstallments({ purchaseDate: date, totalCents, interestPercent: 0, count: installments, closingDay: card.closing_day, dueDay: card.due_day ?? 1 });
+      setBusy(true);
+      try {
+        const { error: rpcError } = await createClient().rpc("save_card_purchase", {
+          p_card: card.id,
+          p_description: description.trim(),
+          p_merchant: null,
+          p_date: date,
+          p_total: amount,
+          p_interest: 0,
+          p_count: installments,
+          p_notes: foreign && typed ? `Importe original: ${formatMoney(typed, currency)}` : null,
+          p_shares: shares,
+          p_installments: rows.map((r) => ({ number: r.number, due_date: r.due_date, amount: r.cents / 100 })),
+          p_trip: tripId ?? null,
+          p_category: category,
+        });
+        if (rpcError) throw new Error(rpcError.message);
+      } catch {
+        setBusy(false);
+        return setError("No se pudo guardar el gasto. Revisa tu conexión e inténtalo de nuevo.");
+      }
+      setBusy(false);
+      queryClient.invalidateQueries({ queryKey: ["tarjetas"] });
+      onSaved();
+      return;
+    }
 
     const result = buildSplits();
     if (typeof result === "string") return setError(result);
@@ -343,7 +389,19 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
         )}
       </div>
 
-      {forcedPool ? (
+      {creditPending ? (
+        <div className="rounded-xl bg-moss/15 px-3.5 py-3 text-sm text-forest">
+          <p>
+            Queda en la tarjeta como <span className="font-medium">sin pagar</span>. Cuando se cobre, márcalo como pagado en Tarjetas y, si quieres repartirlo, pásalo a Gastos desde ahí.
+          </p>
+          <label className={`${label} mt-3`} htmlFor="g-cuotas">Cuotas</label>
+          <select id="g-cuotas" className={field} value={installments} onChange={(e) => setInstallments(Number(e.target.value))}>
+            {[1, 2, 3, 4, 6, 9, 12, 18, 24].map((n) => (
+              <option key={n} value={n}>{n === 1 ? "1 pago (0/1)" : `${n} cuotas`}</option>
+            ))}
+          </select>
+        </div>
+      ) : forcedPool ? (
         <p className="rounded-xl bg-moss/15 px-3.5 py-3 text-sm text-forest">
           Pagado con la tarjeta compartida: sale del dinero de los dos, así que no crea deudas entre ustedes.
         </p>
@@ -361,6 +419,7 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
         </div>
       )}
 
+      {!creditPending && (
       <div>
         <p className={label}>Dividir</p>
         <div className="flex gap-1 rounded-xl bg-washi-deep p-1" role="tablist" aria-label="Forma de dividir">
@@ -442,6 +501,7 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
           </p>
         )}
       </div>
+      )}
 
       {error && (
         <p role="alert" className="rounded-xl bg-hanko/10 px-4 py-3 text-sm text-hanko">
@@ -453,7 +513,7 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, expense, splits
         disabled={saving}
         className="min-h-12 rounded-2xl bg-forest px-8 text-base font-medium text-surface shadow-sm transition active:scale-95 disabled:opacity-60"
       >
-        {saving ? "Guardando…" : expense ? "Guardar cambios" : "Añadir gasto"}
+        {saving ? "Guardando…" : expense ? "Guardar cambios" : creditPending ? "Anotar en la tarjeta" : "Añadir gasto"}
       </button>
 
       {expense && (

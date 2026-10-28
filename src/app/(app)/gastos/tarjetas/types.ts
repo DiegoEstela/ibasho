@@ -26,6 +26,9 @@ export type Purchase = {
   installments_count: number;
   expense_id: string | null;
   notes: string | null;
+  /** Viaje del que viene la compra; nulo si es del hogar. */
+  trip_id: string | null;
+  category: string | null;
   created_at: string;
 };
 
