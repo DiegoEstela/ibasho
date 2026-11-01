@@ -487,13 +487,13 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   /** Hoy en España como «aaaa-mm-dd» (sin new Date() para la lógica). */
   const todayMadrid = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date());
 
-  async function finishPurchase(totalEuros: number, store: string) {
+  async function finishPurchase(totalEuros: number, store: string, cardId: string | null) {
     const cart = items.filter((i) => i.done && i.en_carrito);
     if (cart.length === 0) return;
 
     const { data: purchase, error } = await supabase
       .from("shopping_purchases")
-      .insert({ household_id: householdId, purchased_on: todayMadrid(), store: store || null, total_amount: totalEuros })
+      .insert({ household_id: householdId, purchased_on: todayMadrid(), store: store || null, total_amount: totalEuros, ...(cardId ? { card_id: cardId } : {}) })
       .select(PURCHASES_SELECT)
       .single();
     if (error || !purchase) {
@@ -814,7 +814,8 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   const cart = items.filter((i) => i.done && i.en_carrito);
   const activeFilter: "todo" | "salida" = !selecting && filter === "salida" && salida.length > 0 ? "salida" : "todo";
   // Las baldosas de categorías (móvil) solo con la lista completa y fuera de la selección.
-  const searchKey = tab === "compra" && searchOpen ? plain(search) : "";
+  // Se busca con la lupa y también mientras escribes en el campo de añadir (así no hace falta abrir nada).
+  const searchKey = tab === "compra" && !selecting ? plain(searchOpen ? search : "") || plain(text) : "";
   const showTiles = tab === "compra" && view === "categorias" && !selecting && activeFilter === "todo" && !searchKey;
 
   const shown = activeFilter === "salida" ? salida : pending;
@@ -1253,11 +1254,11 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
                 <div className="rounded-2xl border border-dashed border-line bg-surface/60 p-8 text-center">
                   <ShoppingBasket className="mx-auto text-forest" size={36} strokeWidth={1.5} />
                   <p className="mt-3 font-display text-lg font-bold">
-                    {searchKey ? "Nada coincide con tu búsqueda" : selectedCat ? "No falta nada de esta categoría" : "La lista está vacía"}
+                    {searchKey ? "No está en la lista" : selectedCat ? "No falta nada de esta categoría" : "La lista está vacía"}
                   </p>
                   <p className="mt-1 text-sm text-ink-soft">
                     {searchKey
-                      ? "Prueba con otra palabra."
+                      ? text.trim() ? `Pulsa + para añadir «${text.trim()}».` : "Prueba con otra palabra."
                       : "Escribe arriba lo que falta y aparecerá en el teléfono de tu pareja al instante."}
                   </p>
                 </div>
@@ -1382,6 +1383,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
           key={finishOpen ? "open" : "closed"}
           cart={cart}
           leftover={salida.length}
+          cards={cards}
           onUncart={toggle}
           onFinish={finishPurchase}
         />

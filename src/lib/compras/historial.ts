@@ -5,6 +5,8 @@ export type ShoppingPurchase = {
   store: string | null;
   total_amount: number;
   expense_id: string | null;
+  /** Tarjeta con la que se pagó; nulo = efectivo u otro. */
+  card_id: string | null;
   created_at: string;
 };
 
@@ -16,7 +18,7 @@ export type ShoppingPurchaseItem = {
   category: string | null;
 };
 
-export const PURCHASES_SELECT = "id, purchased_on, store, total_amount, expense_id, created_at";
+export const PURCHASES_SELECT = "id, purchased_on, store, total_amount, expense_id, card_id, created_at";
 export const PURCHASE_ITEMS_SELECT = "id, purchase_id, name, quantity, category";
 
 /** Agrupa las compras por mes («aaaa-mm»), de la más reciente a la más antigua. */

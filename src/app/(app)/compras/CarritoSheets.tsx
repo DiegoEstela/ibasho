@@ -20,17 +20,20 @@ export type CardOption = { id: string; name: string; last4: string | null };
 export function FinishPane({
   cart,
   leftover,
+  cards,
   onUncart,
   onFinish,
 }: {
   cart: Item[];
+  cards: CardOption[];
   /** Productos de «Para el súper» que no se tacharon: vuelven a la lista. */
   leftover: number;
   onUncart: (item: Item) => void;
-  onFinish: (totalEuros: number, store: string) => Promise<void>;
+  onFinish: (totalEuros: number, store: string, cardId: string | null) => Promise<void>;
 }) {
   const [total, setTotal] = useState("");
   const [store, setStore] = useState("");
+  const [card, setCard] = useState("");
   const [busy, setBusy] = useState(false);
   const amount = parseAmount(total);
 
@@ -38,7 +41,7 @@ export function FinishPane({
     e.preventDefault();
     if (amount === null || busy) return;
     setBusy(true);
-    await onFinish(amount, store.trim());
+    await onFinish(amount, store.trim(), card || null);
     setBusy(false);
   }
 
@@ -90,6 +93,20 @@ export function FinishPane({
         </datalist>
       </div>
 
+      <div>
+        <label htmlFor="f-card" className="mb-1 block text-sm font-medium">
+          Pagado con
+        </label>
+        <select id="f-card" className={field} value={card} onChange={(e) => setCard(e.target.value)}>
+          <option value="">Efectivo / otro</option>
+          {cards.map((c) => (
+            <option key={c.id} value={c.id}>
+              {cardLabel(c)}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {leftover > 0 && (
         <p className="text-sm text-ink-soft">
           {leftover === 1 ? "1 producto sin tachar vuelve" : `${leftover} productos sin tachar vuelven`} a la lista.
@@ -123,6 +140,7 @@ export function HistoryPane({
   onSent: (purchaseId: string) => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const cardOf = (p: ShoppingPurchase) => cards.find((c) => c.id === p.card_id);
 
   if (purchases.length === 0) {
     return (
@@ -159,6 +177,7 @@ export function HistoryPane({
                       <span className="block truncate text-[15px]">{p.store || "Compra del súper"}</span>
                       <span className="block truncate text-xs text-ink-soft">
                         {formatDate(p.purchased_on)} · {rows.length === 1 ? "1 producto" : `${rows.length} productos`}
+                        {cardOf(p) ? ` · ${cardLabel(cardOf(p)!)}` : ""}
                         {p.expense_id ? " · en Gastos" : ""}
                       </span>
                     </span>
@@ -201,7 +220,7 @@ function SendBlock({
   userId: string;
   onSent: (purchaseId: string) => void;
 }) {
-  const [card, setCard] = useState("");
+  const [card, setCard] = useState(purchase.card_id ?? "");
   const [payer, setPayer] = useState(userId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
