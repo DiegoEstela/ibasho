@@ -1,19 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Check, ChevronDown, House, LayoutGrid, List, ListChecks, ListPlus, Package, Pencil, Plus, ShoppingBasket, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, History, House, LayoutGrid, List, ListChecks, ListPlus, Package, Pencil, Plus, Search, ShoppingBasket, Trash2, X } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SwipeRow } from "@/components/ui/SwipeRow";
 import { CATEGORIES, DEFAULT_CATEGORY_STYLE, classify, type Category } from "@/lib/compras/categories";
 import { colorFor, iconFor } from "@/lib/compras/icons";
+import type { ShoppingPurchase, ShoppingPurchaseItem } from "@/lib/compras/historial";
+import { PURCHASES_SELECT, PURCHASE_ITEMS_SELECT } from "@/lib/compras/historial";
 import { purchaseStats, type PurchaseRow, type PurchaseStat } from "@/lib/compras/suggestions";
 import { deleteTemplate, loadTemplates, saveTemplate, type Template } from "@/lib/compras/templates";
 import { formatQuantity, parseIngredient } from "@/lib/cocina/parse";
 import { useProfile } from "@/components/profile/ProfileProvider";
 import { createClient } from "@/lib/supabase/client";
 import { notifyPartner } from "@/lib/push/client";
+import { formatEUR, toCents } from "@/lib/gastos/money";
 import { timeAgo } from "@/lib/utils/time";
+import { FinishPane, HistoryPane, type CardOption } from "./CarritoSheets";
 import { CategorySheet } from "./CategorySheet";
 import { CategoryTiles } from "./CategoryTiles";
 import { PickRow } from "./PickRow";
@@ -30,6 +34,8 @@ export type Item = {
   store: string | null;
   /** Va en la lista corta del próximo súper («Voy a comprar»). */
   en_salida: boolean;
+  /** Tachado en el súper y todavía sin registrar en una compra terminada. */
+  en_carrito: boolean;
   done: boolean;
   done_by: string | null;
   done_at: string | null;
@@ -50,6 +56,10 @@ type Props = {
   /** Compras ya hechas, para saber qué toca comprar. */
   history: PurchaseRow[];
   members: Member[];
+  initialPurchases: ShoppingPurchase[];
+  initialPurchaseItems: ShoppingPurchaseItem[];
+  /** Tarjetas del hogar, para elegir con cuál se pagó al pasar la compra a Gastos. */
+  cards: CardOption[];
 };
 
 type ProductPick = { name: string; quantity: string | null };
@@ -99,12 +109,14 @@ function setStoredView(next: View) {
 }
 
 const key = (s: string) => s.trim().toLowerCase();
+// Para buscar: sin mayúsculas ni tildes.
+const plain = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const field =
   "min-h-11 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest";
 
-export function ShoppingList({ householdId, userId, initialItems, initialProducts, initialCategories, initialTemplates, templatesUnavailable, history, members }: Props) {
+export function ShoppingList({ householdId, userId, initialItems, initialProducts, initialCategories, initialTemplates, templatesUnavailable, history, members, initialPurchases, initialPurchaseItems, cards }: Props) {
   const profile = useProfile();
   const [supabase] = useState(() => createClient());
   const [now] = useState(() => Date.now());
@@ -113,6 +125,9 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     Object.fromEntries(initialProducts.map((p) => [key(p.name), p])),
   );
   const [text, setText] = useState("");
+  // Buscador de la lista de compras: filtra lo pendiente sin tocar el campo de añadir.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const [focused, setFocused] = useState(false);
   const [editing, setEditing] = useState<Item | null>(null);
   const [showDone, setShowDone] = useState(false);
@@ -128,6 +143,12 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
   const [selecting, setSelecting] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<Toast | null>(null);
+  const [purchases, setPurchases] = useState(initialPurchases);
+  const [purchaseItems, setPurchaseItems] = useState(initialPurchaseItems);
+  const [finishOpen, setFinishOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // Si aún no se ejecutó la migración del carrito, tachar funciona como siempre (sin carrito).
+  const [carritoReady] = useState(() => initialItems.length === 0 || "en_carrito" in initialItems[0]);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -298,6 +319,7 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
       category,
       store: null,
       en_salida: inTrip,
+      en_carrito: false,
       done: false,
       done_by: null,
       done_at: null,
@@ -462,6 +484,67 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     if (a && b) flash({ text: keep.size === 0 ? "Selección vaciada" : keep.size === 1 ? "Listo para el súper: 1 producto" : `Listo para el súper: ${keep.size} productos` });
   }
 
+  /** Hoy en España como «aaaa-mm-dd» (sin new Date() para la lógica). */
+  const todayMadrid = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date());
+
+  async function finishPurchase(totalEuros: number, store: string) {
+    const cart = items.filter((i) => i.done && i.en_carrito);
+    if (cart.length === 0) return;
+
+    const { data: purchase, error } = await supabase
+      .from("shopping_purchases")
+      .insert({ household_id: householdId, purchased_on: todayMadrid(), store: store || null, total_amount: totalEuros })
+      .select(PURCHASES_SELECT)
+      .single();
+    if (error || !purchase) {
+      flash({ text: "No se pudo guardar la compra." });
+      return;
+    }
+
+    const { data: rows, error: itemsError } = await supabase
+      .from("shopping_purchase_items")
+      .insert(cart.map((i) => ({ household_id: householdId, purchase_id: purchase.id, name: i.name, quantity: i.quantity, category: i.category })))
+      .select(PURCHASE_ITEMS_SELECT);
+    if (itemsError) {
+      // Sin el detalle el registro quedaría a medias: se deshace.
+      await supabase.from("shopping_purchases").delete().eq("id", purchase.id);
+      flash({ text: "No se pudo guardar la compra." });
+      return;
+    }
+
+    const ids = cart.map((i) => i.id);
+    const leftover = items.filter((i) => !i.done && i.en_salida).map((i) => i.id);
+    setItems((prev) => prev.map((i) => (ids.includes(i.id) ? { ...i, en_carrito: false } : leftover.includes(i.id) ? { ...i, en_salida: false } : i)));
+    setPurchases((prev) => [purchase as ShoppingPurchase, ...prev]);
+    setPurchaseItems((prev) => [...((rows ?? []) as ShoppingPurchaseItem[]), ...prev]);
+    await supabase.from("shopping_items").update({ en_carrito: false }).in("id", ids);
+    if (leftover.length > 0) await supabase.from("shopping_items").update({ en_salida: false }).in("id", leftover);
+
+    setFinishOpen(false);
+    setFilter("todo");
+    flash({ text: `Compra guardada · ${formatEUR(toCents(totalEuros))}`, undo: () => { setToast(null); setHistoryOpen(true); }, actionLabel: "Ver" });
+  }
+
+  const refetchPurchases = useCallback(async () => {
+    const [p, i] = await Promise.all([
+      supabase.from("shopping_purchases").select(PURCHASES_SELECT).order("purchased_on", { ascending: false }).order("created_at", { ascending: false }).limit(300),
+      supabase.from("shopping_purchase_items").select(PURCHASE_ITEMS_SELECT).limit(5000),
+    ]);
+    if (p.data) setPurchases(p.data as ShoppingPurchase[]);
+    if (i.data) setPurchaseItems(i.data as ShoppingPurchaseItem[]);
+  }, [supabase]);
+
+  useEffect(() => {
+    const filter = `household_id=eq.${householdId}`;
+    const channel = supabase
+      .channel(`shopping-purchases-${householdId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "shopping_purchases", filter }, () => refetchPurchases())
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, householdId, refetchPurchases]);
+
   async function closeSalida() {
     const ids = items.filter((i) => !i.done && i.en_salida).map((i) => i.id);
     if (!(await setSalida(ids, false))) return;
@@ -575,8 +658,8 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
     if (item.id.startsWith("tmp-")) return;
     const done = !item.done;
     const patch = done
-      ? { done, done_by: userId, done_at: new Date().toISOString(), ...(item.en_salida ? { en_salida: false } : {}) }
-      : { done, done_by: null, done_at: null };
+      ? { done, done_by: userId, done_at: new Date().toISOString(), ...(item.en_salida ? { en_salida: false } : {}), ...(carritoReady ? { en_carrito: true } : {}) }
+      : { done, done_by: null, done_at: null, ...(carritoReady ? { en_carrito: false } : {}) };
 
     if (done) navigator.vibrate?.(12);
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...patch } : i)));
@@ -728,11 +811,14 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
 
   // La salida: lo pendiente que se apartó para el súper. Si se vacía, se vuelve a ver toda la lista.
   const salida = pending.filter((i) => i.en_salida);
+  const cart = items.filter((i) => i.done && i.en_carrito);
   const activeFilter: "todo" | "salida" = !selecting && filter === "salida" && salida.length > 0 ? "salida" : "todo";
   // Las baldosas de categorías (móvil) solo con la lista completa y fuera de la selección.
-  const showTiles = tab === "compra" && view === "categorias" && !selecting && activeFilter === "todo";
+  const searchKey = tab === "compra" && searchOpen ? plain(search) : "";
+  const showTiles = tab === "compra" && view === "categorias" && !selecting && activeFilter === "todo" && !searchKey;
 
-  const grouped = groupByCategory(activeFilter === "salida" ? salida : pending, stats, catOrder);
+  const shown = activeFilter === "salida" ? salida : pending;
+  const grouped = groupByCategory(searchKey ? shown.filter((i) => plain(i.name).includes(searchKey)) : shown, stats, catOrder);
 
   const visibleGroups = useMemo(
     () => (selectedCat ? grouped.filter(([c]) => c === selectedCat) : grouped),
@@ -922,11 +1008,17 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
             </div>
           )}
           <div className="flex-1" />
-          {activeFilter === "salida" && (
+          {activeFilter === "salida" && cart.length === 0 && (
             <button onClick={closeSalida} className="min-h-10 rounded-xl px-3 text-sm font-medium text-hanko transition active:scale-95">
               Cerrar compra
             </button>
           )}
+          <button
+            onClick={() => setHistoryOpen(true)}
+            className="flex min-h-10 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-forest transition active:scale-95"
+          >
+            <History size={18} /> Historial
+          </button>
           <button
             onClick={() => setTemplatesOpen(true)}
             className="flex min-h-10 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-forest transition active:scale-95"
@@ -960,6 +1052,22 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
           {tab === "compra" && pending.length > 0 && !selecting && (
             <button
               type="button"
+              onClick={() => {
+                setSearchOpen((o) => !o);
+                setSearch("");
+              }}
+              aria-label="Buscar en la lista"
+              aria-pressed={searchOpen}
+              className={`flex size-11 shrink-0 items-center justify-center rounded-xl border shadow-sm transition active:scale-95 ${
+                searchOpen ? "border-forest bg-forest text-surface" : "border-line bg-surface text-forest"
+              }`}
+            >
+              <Search size={20} />
+            </button>
+          )}
+          {tab === "compra" && pending.length > 0 && !selecting && (
+            <button
+              type="button"
               onClick={startSelecting}
               aria-label={salida.length > 0 ? "Editar lo que vas a comprar" : "Voy a comprar"}
               className="flex size-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-line bg-surface text-forest shadow-sm transition active:scale-95 lg:w-auto lg:px-4"
@@ -969,6 +1077,31 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
             </button>
           )}
         </form>
+
+        {tab === "compra" && searchOpen && !selecting ? (
+          <div className="relative mt-2 lg:max-w-3xl">
+            <Search size={18} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-soft" />
+            <input
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar en la lista…"
+              autoComplete="off"
+              aria-label="Buscar en la lista"
+              className={`${field} pl-10 pr-10`}
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                aria-label="Borrar búsqueda"
+                className="absolute right-1 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center text-ink-soft"
+              >
+                <X size={18} />
+              </button>
+            )}
+          </div>
+        ) : null}
 
         {(focused || text) && suggestions.length > 0 && (
           <div className="mt-2 flex gap-2 chip-row lg:max-w-3xl" role="listbox" aria-label="Sugerencias">
@@ -1120,10 +1253,12 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
                 <div className="rounded-2xl border border-dashed border-line bg-surface/60 p-8 text-center">
                   <ShoppingBasket className="mx-auto text-forest" size={36} strokeWidth={1.5} />
                   <p className="mt-3 font-display text-lg font-bold">
-                    {selectedCat ? "No falta nada de esta categoría" : "La lista está vacía"}
+                    {searchKey ? "Nada coincide con tu búsqueda" : selectedCat ? "No falta nada de esta categoría" : "La lista está vacía"}
                   </p>
                   <p className="mt-1 text-sm text-ink-soft">
-                    Escribe arriba lo que falta y aparecerá en el teléfono de tu pareja al instante.
+                    {searchKey
+                      ? "Prueba con otra palabra."
+                      : "Escribe arriba lo que falta y aparecerá en el teléfono de tu pareja al instante."}
                   </p>
                 </div>
               ) : (
@@ -1214,6 +1349,19 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
         </div>
       )}
 
+      {cart.length > 0 && !selecting && tab === "compra" && (
+        <div className="fixed inset-x-4 bottom-24 z-30 mx-auto flex max-w-md items-center gap-2 rounded-2xl border border-line bg-surface p-2 pl-4 shadow-lg lg:bottom-8">
+          <ShoppingBasket size={20} className="shrink-0 text-forest" />
+          <span className="flex-1 text-sm font-medium">{cart.length === 1 ? "Carrito · 1 producto" : `Carrito · ${cart.length} productos`}</span>
+          <button
+            onClick={() => setFinishOpen(true)}
+            className="min-h-11 rounded-xl bg-forest px-4 text-sm font-medium text-surface transition active:scale-95"
+          >
+            Terminar compra
+          </button>
+        </div>
+      )}
+
       {selecting && (
         <div className="fixed inset-x-4 bottom-24 z-40 mx-auto flex max-w-md items-center gap-2 rounded-2xl border border-line bg-surface p-2 shadow-lg lg:bottom-8">
           <button onClick={() => setSelecting(false)} className="min-h-11 rounded-xl px-4 text-sm text-ink-soft">
@@ -1228,6 +1376,27 @@ export function ShoppingList({ householdId, userId, initialItems, initialProduct
           </button>
         </div>
       )}
+
+      <BottomSheet open={finishOpen} onClose={() => setFinishOpen(false)} title="Terminar compra">
+        <FinishPane
+          key={finishOpen ? "open" : "closed"}
+          cart={cart}
+          leftover={salida.length}
+          onUncart={toggle}
+          onFinish={finishPurchase}
+        />
+      </BottomSheet>
+
+      <BottomSheet open={historyOpen} onClose={() => setHistoryOpen(false)} title="Historial de compras">
+        <HistoryPane
+          purchases={purchases}
+          items={purchaseItems}
+          cards={cards}
+          members={members}
+          userId={userId}
+          onSent={() => refetchPurchases()}
+        />
+      </BottomSheet>
 
       <BottomSheet open={templatesOpen} onClose={() => setTemplatesOpen(false)} title="Plantillas">
         <TemplatePane

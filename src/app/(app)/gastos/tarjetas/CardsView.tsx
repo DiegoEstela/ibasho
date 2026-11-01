@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { CreditCard, Plus, Repeat } from "lucide-react";
+import { ChevronDown, CreditCard, Plus, Repeat } from "lucide-react";
 import { GastosTabs } from "@/components/ui/GastosTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { QueryErrorBanner } from "@/components/query/QueryErrorBanner";
@@ -333,6 +333,56 @@ export function CardsView({
   const detail = purchases.find((p) => p.id === detailId) ?? null;
   const detailShares = shares.filter((s) => s.purchase_id === detailId);
 
+  // Lo que aún tiene cuotas por pagar va arriba; lo terminado se guarda aparte.
+  const openPurchases = visiblePurchases.filter((p) => (statsByPurchase.get(p.id)?.remaining ?? 0) > 0);
+  const paidPurchases = visiblePurchases.filter((p) => (statsByPurchase.get(p.id)?.remaining ?? 0) === 0);
+
+  const purchaseRow = (p: Purchase) => {
+    const stats = statsByPurchase.get(p.id)!;
+    const card = cards.find((c) => c.id === p.card_id);
+    const progress = stats.total === 0 ? 0 : (stats.paid / stats.total) * 100;
+    const done = stats.remaining === 0;
+    const mine = person ? pendingOf(p.id, person) : null;
+    return (
+      <li key={p.id}>
+        <button onClick={() => { setDetailNotice(""); setDetailId(p.id); }} className="block w-full px-3 py-2.5 text-left">
+          <span className="flex items-center gap-3">
+            <span
+              className="flex size-9 shrink-0 items-center justify-center rounded-xl"
+              style={{ background: `color-mix(in srgb, ${colorFor(card?.color ?? "forest")} 22%, transparent)`, color: colorFor(card?.color ?? "forest") }}
+            >
+              <CreditCard size={18} strokeWidth={1.75} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[15px]">{p.description}</span>
+              <span className="block truncate text-xs text-ink-soft">
+                {[card?.name, formatDate(p.purchase_date)].filter(Boolean).join(" · ")}
+              </span>
+            </span>
+            <span className="text-right">
+              <span className="block text-[15px] font-medium">{formatEUR(stats.firstCents)}</span>
+              <span className="block text-[11px] text-ink-soft">
+                {p.installments_count === 1 ? "un pago" : `× ${p.installments_count} cuotas`}
+              </span>
+            </span>
+          </span>
+
+          <span className="mt-2 flex items-center gap-3">
+            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-washi-deep">
+              <span className="block h-full rounded-full bg-forest transition-all" style={{ width: `${progress}%` }} />
+            </span>
+            <span className="shrink-0 text-[11px] text-ink-soft">
+              {done
+                ? "Terminada ✓"
+                : `${stats.paid}/${stats.total} · quedan ${formatEUR(mine ?? stats.pendingCents)}${stats.nextDue ? ` · próxima ${formatDate(stats.nextDue).slice(0, 5)}` : ""}`}
+            </span>
+          </span>
+        </button>
+
+      </li>
+    );
+  };
+
   // ---------- Acciones ----------
   const write = useMutation({
     mutationFn: async (run: () => PromiseLike<{ error: { message: string } | null }>) => {
@@ -589,7 +639,7 @@ export function CardsView({
             {/* Compras */}
             <div className="lg:col-start-1 lg:row-span-2 lg:row-start-1">
               <h2 className="mb-2 px-1 font-display text-base font-bold lg:text-lg">
-                Compras{cardFilter && cards.find((c) => c.id === cardFilter) ? ` · ${cards.find((c) => c.id === cardFilter)!.name}` : ""}
+                Por pagar{cardFilter && cards.find((c) => c.id === cardFilter) ? ` · ${cards.find((c) => c.id === cardFilter)!.name}` : ""}
               </h2>
 
               {visiblePurchases.length === 0 && creditExpenses.length === 0 ? (
@@ -604,53 +654,25 @@ export function CardsView({
                   </button>
                 </div>
               ) : visiblePurchases.length === 0 ? null : (
-                <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
-                  {visiblePurchases.map((p) => {
-                    const stats = statsByPurchase.get(p.id)!;
-                    const card = cards.find((c) => c.id === p.card_id);
-                    const progress = stats.total === 0 ? 0 : (stats.paid / stats.total) * 100;
-                    const done = stats.remaining === 0;
-                    const mine = person ? pendingOf(p.id, person) : null;
-                    return (
-                      <li key={p.id}>
-                        <button onClick={() => { setDetailNotice(""); setDetailId(p.id); }} className="block w-full px-3 py-2.5 text-left">
-                          <span className="flex items-center gap-3">
-                            <span
-                              className="flex size-9 shrink-0 items-center justify-center rounded-xl"
-                              style={{ background: `color-mix(in srgb, ${colorFor(card?.color ?? "forest")} 22%, transparent)`, color: colorFor(card?.color ?? "forest") }}
-                            >
-                              <CreditCard size={18} strokeWidth={1.75} />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[15px]">{p.description}</span>
-                              <span className="block truncate text-xs text-ink-soft">
-                                {[card?.name, formatDate(p.purchase_date)].filter(Boolean).join(" · ")}
-                              </span>
-                            </span>
-                            <span className="text-right">
-                              <span className="block text-[15px] font-medium">{formatEUR(stats.firstCents)}</span>
-                              <span className="block text-[11px] text-ink-soft">
-                                {p.installments_count === 1 ? "un pago" : `× ${p.installments_count} cuotas`}
-                              </span>
-                            </span>
-                          </span>
-
-                          <span className="mt-2 flex items-center gap-3">
-                            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-washi-deep">
-                              <span className="block h-full rounded-full bg-forest transition-all" style={{ width: `${progress}%` }} />
-                            </span>
-                            <span className="shrink-0 text-[11px] text-ink-soft">
-                              {done
-                                ? "Terminada ✓"
-                                : `${stats.paid}/${stats.total} · quedan ${formatEUR(mine ?? stats.pendingCents)}${stats.nextDue ? ` · próxima ${formatDate(stats.nextDue).slice(0, 5)}` : ""}`}
-                            </span>
-                          </span>
-                        </button>
-
-                      </li>
-                    );
-                  })}
-                </ul>
+                <>
+                  {openPurchases.length > 0 && (
+                    <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">{openPurchases.map(purchaseRow)}</ul>
+                  )}
+                  {openPurchases.length === 0 && (
+                    <p className="rounded-2xl border border-dashed border-line bg-surface/60 p-4 text-center text-sm text-ink-soft">
+                      No te queda ninguna compra por pagar ✓
+                    </p>
+                  )}
+                  {paidPurchases.length > 0 && (
+                    <details className="group mt-3">
+                      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between rounded-2xl border border-line bg-surface px-3 text-sm font-medium">
+                        <span>Pagadas · {paidPurchases.length}</span>
+                        <ChevronDown size={18} className="text-ink-soft transition group-open:rotate-180" />
+                      </summary>
+                      <ul className="mt-2 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">{paidPurchases.map(purchaseRow)}</ul>
+                    </details>
+                  )}
+                </>
               )}
 
               {creditExpenses.length > 0 && (
