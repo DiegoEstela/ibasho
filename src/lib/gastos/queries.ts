@@ -10,19 +10,23 @@ export type GastosData = {
   settlements: Settlement[];
   cards: Card[];
   deposits: DepositRow[];
+  /** Gastos que tienen una factura (PDF o foto) guardada en Gastos fijos. */
+  filedExpenseIds: string[];
 };
 
 export const gastosKey = (groupId: string) => ["gastos", groupId] as const;
 
 /** Pide todo lo que usa la pantalla de Gastos. Si algo falla, lanza el error para que React Query lo gestione. */
 export async function fetchGastos(supabase: SupabaseClient, groupId: string): Promise<GastosData> {
-  const [e, s, st, c, d] = await Promise.all([
+  const [e, s, st, c, d, f] = await Promise.all([
     supabase.from("expenses").select("*").eq("group_id", groupId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
     supabase.from("expense_splits").select("expense_id, participant_id, amount, expenses!inner(group_id)").eq("expenses.group_id", groupId).limit(10000),
     supabase.from("settlements").select("*").eq("group_id", groupId).order("settled_on", { ascending: false }).limit(500),
     supabase.from("cards").select("*").eq("archived", false).order("created_at"),
     supabase.from("card_deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }).limit(2000),
+    supabase.from("fixed_expense_entries").select("expense_id").not("file_path", "is", null).not("expense_id", "is", null).limit(5000),
   ]);
+  // La factura es un extra: si falla (p. ej. falta la migración 0025), los gastos se ven igual.
   const failed = [e, s, st, c, d].find((r) => r.error);
   if (failed?.error) throw new Error(failed.error.message);
 
@@ -32,6 +36,7 @@ export async function fetchGastos(supabase: SupabaseClient, groupId: string): Pr
     settlements: (st.data ?? []) as Settlement[],
     cards: (c.data ?? []) as Card[],
     deposits: (d.data ?? []) as DepositRow[],
+    filedExpenseIds: ((f.data ?? []) as { expense_id: string }[]).map((r) => r.expense_id),
   };
 }
 

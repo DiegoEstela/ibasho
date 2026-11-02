@@ -62,12 +62,13 @@ async function Gastos() {
   const participants = { data: synced.participants };
 
   // Segunda ronda: movimientos del grupo.
-  const [expenses, splits, settlements, cards, deposits] = await Promise.all([
+  const [expenses, splits, settlements, cards, deposits, filed] = await Promise.all([
     supabase.from("expenses").select("*").eq("group_id", groupId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
     supabase.from("expense_splits").select("expense_id, participant_id, amount, expenses!inner(group_id)").eq("expenses.group_id", groupId).limit(10000),
     supabase.from("settlements").select("*").eq("group_id", groupId).order("settled_on", { ascending: false }).limit(500),
     supabase.from("cards").select("*").eq("archived", false).order("created_at"),
     supabase.from("card_deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }).limit(2000),
+    supabase.from("fixed_expense_entries").select("expense_id").not("file_path", "is", null).not("expense_id", "is", null).limit(5000),
   ]);
 
   const failed = [
@@ -100,6 +101,7 @@ async function Gastos() {
       initialSettlements={(settlements.data ?? []) as Settlement[]}
       initialCards={(cards.data ?? []) as Card[]}
       initialDeposits={(deposits.data ?? []) as DepositRow[]}
+      initialFiledExpenseIds={((filed.data ?? []) as { expense_id: string }[]).map((r) => r.expense_id)}
     />
   );
 }

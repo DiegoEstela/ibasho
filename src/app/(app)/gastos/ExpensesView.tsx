@@ -33,6 +33,7 @@ type Props = {
   initialSettlements: Settlement[];
   initialCards: Card[];
   initialDeposits: DepositRow[];
+  initialFiledExpenseIds: string[];
 };
 
 type HistoryRow =
@@ -78,6 +79,7 @@ export function ExpensesView({
   initialSettlements,
   initialCards,
   initialDeposits,
+  initialFiledExpenseIds,
 }: Props) {
   const [supabase] = useState(() => createClient());
   const [currentMonth] = useState(() => {
@@ -87,7 +89,7 @@ export function ExpensesView({
 
   const queryClient = useQueryClient();
   const {
-    data: { expenses, splits, settlements, cards, deposits },
+    data: { expenses, splits, settlements, cards, deposits, filedExpenseIds },
     patch,
     isError,
     isFetching,
@@ -97,6 +99,7 @@ export function ExpensesView({
     settlements: initialSettlements,
     cards: initialCards,
     deposits: initialDeposits,
+    filedExpenseIds: initialFiledExpenseIds,
   });
 
   const [monthFilter, setMonthFilter] = useState<string>(currentMonth);
@@ -477,6 +480,7 @@ export function ExpensesView({
                     payer={payerOf(row.expense)}
                     cardText={cardOf(row.expense.card_id) ? cardLabel(cardOf(row.expense.card_id)!) : null}
                     mine={mySplit(row.expense.id)}
+                    hasFile={filedExpenseIds.includes(row.expense.id)}
                     onOpen={() => setExpenseSheet({ open: true, expense: row.expense })}
                   />
                 ) : (
@@ -726,20 +730,27 @@ function ExpenseItem({
   payer,
   cardText,
   mine,
+  hasFile,
   onOpen,
 }: {
   expense: Expense;
   payer: string;
   cardText: string | null;
   mine: number;
+  /** Tiene una factura (PDF o foto) para descargar: el icono se pinta en amarillo. */
+  hasFile: boolean;
   onOpen: () => void;
 }) {
   const cat = expenseCategory(expense.category);
-  const color = colorFor(cat.color);
+  const color = hasFile ? "var(--amber)" : colorFor(cat.color);
   return (
     <li>
       <button onClick={onOpen} className={rowButton}>
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>
+        <span
+          className="flex size-8 shrink-0 items-center justify-center rounded-lg"
+          style={{ background: `color-mix(in srgb, ${color} ${hasFile ? 28 : 20}%, transparent)`, color }}
+          title={hasFile ? "Tiene una factura para descargar" : undefined}
+        >
           <CatIcon name={cat.icon} size={16} strokeWidth={1.75} />
         </span>
         <span className="min-w-0 flex-1">

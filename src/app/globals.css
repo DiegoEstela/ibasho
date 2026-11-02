@@ -13,6 +13,7 @@
   --terracotta: #c9704f;
   --sakura: #f2b8c6;
   --hanko: #c8382f;
+  --amber: #d9a21b;
   --line: rgba(58, 51, 40, 0.12);
 
   --background: var(--washi);
@@ -33,6 +34,7 @@
     --terracotta: #e59a6f;
     --sakura: #e8a6bb;
     --hanko: #e0554a;
+    --amber: #e6b94a;
     --line: rgba(243, 233, 210, 0.14);
   }
 }
@@ -51,6 +53,7 @@
   --color-terracotta: var(--terracotta);
   --color-sakura: var(--sakura);
   --color-hanko: var(--hanko);
+  --color-amber: var(--amber);
   --color-line: var(--line);
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   --font-display: var(--font-zen-maru), var(--font-sans);
