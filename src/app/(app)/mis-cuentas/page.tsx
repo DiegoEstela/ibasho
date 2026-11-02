@@ -22,7 +22,7 @@ async function MisCuentas() {
         <div className="rounded-2xl border border-dashed border-line bg-surface/60 p-6 text-sm text-ink-soft">
           <p className="font-medium text-ink">No pudimos cargar tus cuentas.</p>
           <p className="mt-1 break-words font-mono text-xs">{detail}</p>
-          <p className="mt-2 text-xs">Si dice que una tabla no existe, ejecuta la migración 0022 en Supabase.</p>
+          <p className="mt-2 text-xs">Si dice que una tabla no existe, ejecuta las migraciones 0022, 0023 y 0033 en Supabase.</p>
         </div>
       </section>
     );

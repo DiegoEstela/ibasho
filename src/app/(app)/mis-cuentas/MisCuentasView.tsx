@@ -11,13 +11,20 @@ import { expenseCategory } from "@/lib/gastos/categories";
 import { formatEUR } from "@/lib/gastos/money";
 import { createClient } from "@/lib/supabase/client";
 import {
-  accountBalanceCents, addMonths, breakdown, buckets, buildPeriod, inPeriod, monthName, monthOf, movementsCsv, PERIODS, summarize, toMovements, topSlices, totalSavedCents,
+  accountBalanceCents, addMonths, FIXED_HORIZON, breakdown, buckets, buildPeriod, inPeriod, monthName, monthOf, movementsCsv, PERIODS, summarize, toMovements, topSlices, totalSavedCents,
   type PeriodMode,
 } from "@/lib/personal/compute";
 import { useMisCuentas } from "@/lib/personal/queries";
-import type { EntryKind, MisCuentasData, Movement, PersonalEntry } from "@/lib/personal/types";
+import { sharePercent } from "@/lib/personal/fijos";
+import { amountCents, isDueIn, nextDueMonth } from "@/lib/fijos/schedule";
+import type { EntryKind, MisCuentasData, Movement, PersonalCard, PersonalEntry, PersonalFixed } from "@/lib/personal/types";
+import { budgetCsv, budgetFor, cardTiles, categoryUse } from "@/lib/personal/presupuesto";
 import { BarList, Meter, SpendChart } from "./Charts";
 import { EntrySheet } from "./EntrySheet";
+import { LimitsSheet, PersonalFixedSheet, ShareSheet } from "./FixedSheets";
+import { PersonalCardSheet } from "./PersonalCardSheet";
+import { PresupuestoTab } from "./PresupuestoTab";
+import { TarjetasFijosTab } from "./TarjetasFijosTab";
 import { PlanSheet } from "./PlanSheet";
 
 const todayISO = () => {
@@ -33,7 +40,15 @@ const KIND_FILTERS: { value: "" | EntryKind; label: string }[] = [
   { value: "saving", label: "Ahorros" },
 ];
 
-const SOURCE_BADGE = { compartido: "Compartido", cuota: "Cuota", personal: "Personal" } as const;
+const SOURCE_BADGE = { compartido: "Compartido", cuota: "Cuota", personal: "Personal", fijo: "Fijo" } as const;
+
+type TabId = "mes" | "movimientos" | "presupuesto" | "tarjetas";
+const TABS: { id: TabId; label: string }[] = [
+  { id: "mes", label: "Este mes" },
+  { id: "movimientos", label: "Movimientos" },
+  { id: "presupuesto", label: "Presupuesto" },
+  { id: "tarjetas", label: "Tarjetas y fijos" },
+];
 
 const dayLabel = (iso: string, today: string) => {
   if (iso === today) return "Hoy";
@@ -67,6 +82,13 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
   const [entrySheet, setEntrySheet] = useState<{ open: boolean; entry: PersonalEntry | null }>({ open: false, entry: null });
   const [planOpen, setPlanOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const [tab, setTab] = useState<TabId>("mes");
+  // El presupuesto arranca en el mes que viene: es para lo que sirve planificar.
+  const [budgetMonth, setBudgetMonth] = useState(() => addMonths(currentMonth, 1));
+  const [cardSheet, setCardSheet] = useState<{ open: boolean; card: PersonalCard | null }>({ open: false, card: null });
+  const [fixedSheet, setFixedSheet] = useState<{ open: boolean; fixed: PersonalFixed | null }>({ open: false, fixed: null });
+  const [shareId, setShareId] = useState<string | null>(null);
+  const [limitsOpen, setLimitsOpen] = useState(false);
 
   const all = useMemo(() => toMovements(data, today), [data, today]);
   const firstMonth = useMemo(() => (all.length ? monthOf(all[all.length - 1].date) : currentMonth), [all, currentMonth]);
@@ -76,6 +98,14 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
   const savedTotal = totalSavedCents(data.plan, data);
   const accountNow = accountBalanceCents(data.plan, data, today);
   const savingsTarget = Math.round((data.plan?.saving_target ?? 0) * 100);
+
+  const upcomingCents = useMemo(() => inRange.filter((m) => m.kind === "expense" && m.pending).reduce((s, m) => s + m.cents, 0), [inRange]);
+  const budget = useMemo(() => budgetFor(data, all, budgetMonth), [data, all, budgetMonth]);
+  const budgetCategories = useMemo(() => categoryUse(data, all, budgetMonth), [data, all, budgetMonth]);
+  const tiles = useMemo(() => cardTiles(data, all, today), [data, all, today]);
+  // El historial llega hasta este mes: lo previsto de meses futuros va en el presupuesto.
+  const history = useMemo(() => all.filter((m) => m.date.slice(0, 7) <= currentMonth), [all, currentMonth]);
+  const shareFixed = shareId ? data.householdFixed.find((f) => f.id === shareId) : null;
 
   const bars = useMemo(() => buckets(inRange, data.plan, period), [inRange, data.plan, period]);
   const byCategory = useMemo(() => topSlices(breakdown(inRange, (m) => m.category), 6), [inRange]);
@@ -111,8 +141,8 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
     setCategoryFilter("");
   }
 
-  function download(list: Movement[], name: string) {
-    const blob = new Blob([movementsCsv(list)], { type: "text/csv;charset=utf-8" });
+  function download(list: Movement[], name: string, csv = movementsCsv(list)) {
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -162,6 +192,22 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
 
       {isError && <QueryErrorBanner onRetry={() => refetch()} retrying={isFetching} />}
 
+      <div className="no-scrollbar mb-4 flex gap-1 overflow-x-auto rounded-xl bg-washi-deep p-1" role="tablist" aria-label="Secciones">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => setTab(t.id)}
+            className={`min-h-10 flex-1 whitespace-nowrap rounded-lg px-3.5 text-sm font-medium transition lg:flex-none lg:px-5 ${tab === t.id ? "bg-surface text-forest shadow-sm" : "text-ink-soft"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {(tab === "mes" || tab === "movimientos") && (
+        <>
       {/* Período */}
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex gap-1 no-scrollbar overflow-x-auto rounded-xl bg-washi-deep p-1" role="tablist" aria-label="Período">
@@ -198,6 +244,11 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
         </div>
       </div>
 
+        </>
+      )}
+
+      {tab === "mes" && (
+        <>
       {/* Hoy: lo que hay en la cuenta y en la caja de ahorro (no dependen del período) */}
       <div className="mt-4 grid grid-cols-2 gap-3">
         <button
@@ -237,7 +288,7 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
             {summary.incomeCents > 0 ? `de ${formatEUR(summary.incomeCents)} de ingresos` : "Añade tu sueldo en «Mi plan» para ver cuánto te queda"}
           </p>
         </div>
-        <Stat label="Gastos" value={formatEUR(summary.spentCents)} hint={summary.count ? `${summary.count} movimientos · ${formatEUR(summary.avgPerDayCents)}/día` : "Sin gastos"} />
+        <Stat label="Gastos" value={formatEUR(summary.spentCents)} hint={summary.count ? `${upcomingCents > 0 ? `${formatEUR(upcomingCents)} por llegar · ` : ""}${summary.count} movimientos` : "Sin gastos"} />
         <Stat label="Ahorrado" value={formatEUR(summary.savedCents)} hint={summary.goalCents > 0 ? `meta ${formatEUR(summary.goalCents)}` : "en este período"} />
         <Stat
           label="Mayor gasto"
@@ -284,7 +335,37 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
         </Card>
       </div>
 
-      {/* Movimientos */}
+        </>
+      )}
+
+      {tab === "presupuesto" && (
+        <PresupuestoTab
+          budget={budget}
+          categories={budgetCategories}
+          month={budgetMonth}
+          currentMonth={currentMonth}
+          onMonth={setBudgetMonth}
+          maxMonth={addMonths(currentMonth, FIXED_HORIZON)}
+          hasPlan={hasPlan}
+          onPlan={() => setPlanOpen(true)}
+          onLimits={() => setLimitsOpen(true)}
+        />
+      )}
+
+      {tab === "tarjetas" && (
+        <TarjetasFijosTab
+          data={data}
+          tiles={tiles}
+          currentMonth={currentMonth}
+          onAddCard={() => setCardSheet({ open: true, card: null })}
+          onEditCard={(card) => setCardSheet({ open: true, card })}
+          onAddFixed={() => setFixedSheet({ open: true, fixed: null })}
+          onEditFixed={(fixed) => setFixedSheet({ open: true, fixed })}
+          onEditShare={setShareId}
+        />
+      )}
+
+      {tab === "movimientos" && (
       <div className="mt-6">
         <div className="mb-3 flex items-end justify-between gap-3">
           <h2 className="font-display text-lg font-bold lg:text-xl">Movimientos</h2>
@@ -364,7 +445,33 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
         </p>
       </div>
 
-      <EntrySheet open={entrySheet.open} onClose={() => setEntrySheet({ open: false, entry: null })} entry={entrySheet.entry} userId={userId} cards={data.cards} />
+      )}
+
+      <EntrySheet open={entrySheet.open} onClose={() => setEntrySheet({ open: false, entry: null })} entry={entrySheet.entry} userId={userId} cards={data.cards} personalCards={data.personalCards} />
+      <PersonalCardSheet open={cardSheet.open} onClose={() => setCardSheet({ open: false, card: null })} card={cardSheet.card} userId={userId} />
+      <PersonalFixedSheet
+        open={fixedSheet.open}
+        onClose={() => setFixedSheet({ open: false, fixed: null })}
+        fixed={fixedSheet.fixed}
+        userId={userId}
+        currentMonth={currentMonth}
+        cards={data.cards}
+        personalCards={data.personalCards}
+      />
+      <ShareSheet
+        open={!!shareFixed}
+        onClose={() => setShareId(null)}
+        name={shareFixed?.name ?? ""}
+        fixedId={shareFixed?.id ?? ""}
+        userId={userId}
+        percent={shareFixed ? sharePercent(data, shareFixed.id) : 50}
+        amountLabel={
+          shareFixed
+            ? formatEUR(amountCents(shareFixed, data.fixedEntries, isDueIn(shareFixed, currentMonth) ? currentMonth : nextDueMonth(shareFixed, currentMonth)))
+            : ""
+        }
+      />
+      <LimitsSheet open={limitsOpen} onClose={() => setLimitsOpen(false)} userId={userId} limits={data.budgets} />
       <PlanSheet open={planOpen} onClose={() => setPlanOpen(false)} plan={data.plan} userId={userId} savedNow={savedTotal} accountNow={accountNow} />
 
       <BottomSheet open={downloadOpen} onClose={() => setDownloadOpen(false)} title="Descargar">
@@ -383,12 +490,22 @@ export function MisCuentasView({ userId, initialData }: { userId: string; initia
             <Download size={18} className="text-forest" />
           </button>
           <button
-            onClick={() => download(all, "todo")}
+            onClick={() => download(history, "todo")}
             className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 text-left transition active:scale-[0.99]"
           >
             <span>
               <span className="block font-medium">Todo el historial</span>
-              <span className="block text-sm text-ink-soft">{all.length} movimientos desde {monthName(firstMonth)}</span>
+              <span className="block text-sm text-ink-soft">{history.length} movimientos desde {monthName(firstMonth)}</span>
+            </span>
+            <Download size={18} className="text-forest" />
+          </button>
+          <button
+            onClick={() => download([], `presupuesto-${budgetMonth}`, budgetCsv(budget, budgetCategories, monthName(budgetMonth)))}
+            className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 text-left transition active:scale-[0.99]"
+          >
+            <span>
+              <span className="block font-medium">Presupuesto</span>
+              <span className="block text-sm text-ink-soft">{monthName(budgetMonth)} · ingresos, fijos, cuotas y topes</span>
             </span>
             <Download size={18} className="text-forest" />
           </button>

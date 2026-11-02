@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { personCents } from "@/lib/tarjetas/summary";
-import type { CardRef, InstallmentRow, MisCuentasData, PersonalEntry, Plan, SharedRow } from "./types";
+import type { Fixed, FixedEntry } from "@/lib/fijos/schedule";
+import type { Budget, CardRef, FixedShare, InstallmentRow, MisCuentasData, PersonalCard, PersonalEntry, PersonalFixed, Plan, SharedRow } from "./types";
 
 export const misCuentasKey = (userId: string) => ["mis-cuentas", userId] as const;
 
@@ -17,14 +18,21 @@ type SplitJoin = {
 export async function fetchMisCuentas(supabase: SupabaseClient, userId: string, from?: string): Promise<MisCuentasData> {
   const gte = <T extends { gte: (column: string, value: string) => T }>(query: T, column: string) => (from ? query.gte(column, from) : query);
 
-  const [plan, entries, people, cards, shareRows, purchases, installments] = await Promise.all([
+  const [plan, entries, people, cards, shareRows, purchases, installments, pCards, pFixed, hFixed, hEntries, fShares, pBudgets] = await Promise.all([
     supabase.from("personal_plans").select("monthly_income, pay_day, savings_amount, savings_updated_at, account_amount, account_updated_at, monthly_saving_goal, saving_target").eq("user_id", userId).maybeSingle(),
-    gte(supabase.from("personal_entries").select("id, kind, description, amount, entry_date, category, card_id, created_at").order("entry_date", { ascending: false }).limit(5000), "entry_date"),
+    gte(supabase.from("personal_entries").select("id, kind, description, amount, entry_date, category, card_id, personal_card_id, created_at").order("entry_date", { ascending: false }).limit(5000), "entry_date"),
     supabase.from("expense_participants").select("id, user_id, name").limit(500),
-    supabase.from("cards").select("id, name, last4, kind, color").limit(200),
+    supabase.from("cards").select("id, name, last4, kind, color, owner_user_id").eq("archived", false).limit(200),
     supabase.from("card_purchase_shares").select("purchase_id, user_id, percent").limit(5000),
     supabase.from("card_purchases").select("id, description, card_id, installments_count").limit(2000),
     gte(supabase.from("card_installments").select("id, purchase_id, number, due_date, amount, expense_id").is("expense_id", null).limit(20000), "due_date"),
+    // Lo nuevo (migración 0033): si aún no existe, Mis cuentas funciona igual sin tarjetas privadas, fijos ni presupuesto.
+    supabase.from("personal_cards").select("id, name, last4, color, kind, closing_day, due_day, initial_balance").eq("archived", false).order("created_at"),
+    supabase.from("personal_fixed").select("id, name, category, amount, every_months, start_month, due_day, card_id, personal_card_id").eq("archived", false).order("created_at"),
+    supabase.from("fixed_expenses").select("*").eq("archived", false).order("created_at").limit(500),
+    supabase.from("fixed_expense_entries").select("id, fixed_id, month, amount, expense_id").limit(5000),
+    supabase.from("personal_fixed_shares").select("fixed_id, percent").eq("user_id", userId),
+    supabase.from("personal_budgets").select("category, monthly_limit").eq("user_id", userId),
   ]);
 
   const failed = [plan, entries, people, cards, shareRows, purchases, installments].find((r) => r.error);
@@ -91,7 +99,13 @@ export async function fetchMisCuentas(supabase: SupabaseClient, userId: string, 
     entries: ((entries.data ?? []) as PersonalEntry[]).map((e) => ({ ...e, amount: Number(e.amount) })),
     shared,
     installments: mine,
-    cards: (cards.data ?? []) as CardRef[],
+    cards: ((cards.data ?? []) as CardRef[]).filter((c) => c.owner_user_id === null || c.owner_user_id === userId),
+    personalCards: ((pCards.data ?? []) as PersonalCard[]).map((c) => ({ ...c, initial_balance: Number(c.initial_balance) })),
+    personalFixed: ((pFixed.data ?? []) as PersonalFixed[]).map((f) => ({ ...f, amount: Number(f.amount) })),
+    householdFixed: (hFixed.data ?? []) as Fixed[],
+    fixedEntries: (hEntries.data ?? []) as FixedEntry[],
+    fixedShares: ((fShares.data ?? []) as FixedShare[]).map((s) => ({ ...s, percent: Number(s.percent) })),
+    budgets: ((pBudgets.data ?? []) as Budget[]).map((b) => ({ ...b, monthly_limit: Number(b.monthly_limit) })),
   };
 }
 

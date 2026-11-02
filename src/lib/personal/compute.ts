@@ -1,5 +1,6 @@
 import { formatEUR, toCents } from "@/lib/gastos/money";
 import { cardLabel } from "@/lib/tarjetas/labels";
+import { fixedMovements } from "./fijos";
 import type { EntryKind, MisCuentasData, Movement, Plan } from "./types";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -78,8 +79,7 @@ export function buildPeriod(mode: PeriodMode, anchor: string, firstMonth: string
 
 /** Une tus gastos compartidos, tus cuotas y tus movimientos propios en una sola lista (del más reciente al más antiguo). */
 export function toMovements(data: MisCuentasData, today: string): Movement[] {
-  const cardName = new Map(data.cards.map((c) => [c.id, cardLabel(c)]));
-  const methodOf = (cardId: string | null) => (cardId ? (cardName.get(cardId) ?? "Tarjeta") : "Efectivo");
+  const methodOf = methodNamer(data);
   const list: Movement[] = [];
 
   for (const e of data.shared) {
@@ -91,8 +91,9 @@ export function toMovements(data: MisCuentasData, today: string): Movement[] {
       description: e.description,
       category: e.category,
       cents: toCents(e.amount),
-      method: methodOf(e.card_id),
+      method: methodOf(e.card_id, null),
       cardId: e.card_id,
+      personalCardId: null,
       detail: e.paid_by_me ? (e.total - e.amount > 0.004 ? `Pagaste tú ${formatEUR(toCents(e.total))} · tu parte` : "Pagaste tú") : e.paid_by_name ? `Pagó ${e.paid_by_name}` : null,
       pending: e.date > today,
     });
@@ -107,8 +108,9 @@ export function toMovements(data: MisCuentasData, today: string): Movement[] {
       description: i.description,
       category: "Cuotas",
       cents: toCents(i.amount),
-      method: methodOf(i.card_id),
+      method: methodOf(i.card_id, null),
       cardId: i.card_id,
+      personalCardId: null,
       detail: `Cuota ${i.number} de ${i.count}`,
       pending: i.due_date > today,
     });
@@ -123,15 +125,33 @@ export function toMovements(data: MisCuentasData, today: string): Movement[] {
       description: e.description,
       category: e.kind === "expense" ? e.category : e.kind === "income" ? "Ingreso" : "Ahorro",
       cents: toCents(e.amount),
-      method: e.kind === "expense" ? methodOf(e.card_id) : "—",
+      method: e.kind === "expense" || e.personal_card_id ? methodOf(e.card_id, e.personal_card_id) : "—",
       cardId: e.card_id,
+      personalCardId: e.personal_card_id,
       detail: null,
       entryId: e.id,
       pending: e.entry_date > today,
     });
   }
 
+  // Los fijos: desde que empiezan hasta unos meses por delante (para el presupuesto).
+  const currentMonth = today.slice(0, 7);
+  const starts = data.personalFixed.map((f) => f.start_month.slice(0, 7));
+  const firstFixed = starts.length ? starts.reduce((a, b) => (a < b ? a : b)) : currentMonth;
+  list.push(...fixedMovements(data, today, firstFixed < currentMonth ? firstFixed : currentMonth, addMonths(currentMonth, FIXED_HORIZON), methodOf));
+
   return list.sort((a, b) => b.date.localeCompare(a.date) || b.key.localeCompare(a.key));
+}
+
+/** Cuántos meses por delante se calculan los fijos (el presupuesto del mes que viene y algo más). */
+export const FIXED_HORIZON = 6;
+
+/** Nombre de la forma de pago: «Efectivo», una tarjeta del hogar o una tarjeta privada. */
+export function methodNamer(data: MisCuentasData) {
+  const shared = new Map(data.cards.map((c) => [c.id, cardLabel(c)]));
+  const own = new Map(data.personalCards.map((c) => [c.id, cardLabel(c)]));
+  return (cardId: string | null, personalCardId: string | null) =>
+    personalCardId ? (own.get(personalCardId) ?? "Tarjeta privada") : cardId ? (shared.get(cardId) ?? "Tarjeta") : "Efectivo";
 }
 
 export const inPeriod = (list: Movement[], period: Period) => list.filter((m) => m.date >= period.from && m.date <= period.to);
@@ -197,6 +217,10 @@ export function accountBalanceCents(plan: Plan | null, data: MisCuentasData, tod
   }
   for (const e of data.shared) if (e.date > sinceDate && e.date <= today) cents -= toCents(e.amount);
   for (const i of data.installments) if (i.due_date > sinceDate && i.due_date <= today) cents -= toCents(i.amount);
+  // Los fijos que ya vencieron desde entonces también salieron de la cuenta.
+  for (const f of fixedMovements(data, today, sinceDate.slice(0, 7), today.slice(0, 7), methodNamer(data))) {
+    if (f.date > sinceDate && f.date <= today) cents -= f.cents;
+  }
   return cents;
 }
 
@@ -244,7 +268,7 @@ export function buckets(list: Movement[], plan: Plan | null, period: Period): Bu
 // ---------- Descarga ----------
 
 const KIND_LABEL: Record<EntryKind, string> = { expense: "Gasto", income: "Ingreso", saving: "Ahorro" };
-const SOURCE_LABEL = { compartido: "Gasto compartido", cuota: "Cuota de tarjeta", personal: "Personal" } as const;
+const SOURCE_LABEL = { compartido: "Gasto compartido", cuota: "Cuota de tarjeta", personal: "Personal", fijo: "Gasto fijo" } as const;
 
 /** CSV para Excel (separado por «;», con BOM para que se vean bien los acentos). */
 export function movementsCsv(list: Movement[]): string {

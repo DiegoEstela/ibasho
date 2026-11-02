@@ -8,7 +8,7 @@ import { EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
 import { parseAmount } from "@/lib/gastos/money";
 import { createClient } from "@/lib/supabase/client";
 import { cardLabel } from "@/lib/tarjetas/labels";
-import type { CardRef, EntryKind, PersonalEntry } from "@/lib/personal/types";
+import type { CardRef, EntryKind, PersonalCard, PersonalEntry } from "@/lib/personal/types";
 
 const field =
   "min-h-11 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest";
@@ -32,6 +32,7 @@ type Props = {
   entry: PersonalEntry | null;
   userId: string;
   cards: CardRef[];
+  personalCards: PersonalCard[];
 };
 
 /** Anotar un movimiento propio: solo lo ves tú. Los gastos compartidos se anotan en Gastos y aparecen aquí solos. */
@@ -43,13 +44,14 @@ export function EntrySheet(props: Props) {
   );
 }
 
-function EntryForm({ onClose, entry, userId, cards }: Props) {
+function EntryForm({ onClose, entry, userId, cards, personalCards }: Props) {
   const [kind, setKind] = useState<EntryKind>(entry?.kind ?? "expense");
   const [description, setDescription] = useState(entry?.description ?? "");
   const [amountText, setAmountText] = useState(entry ? String(entry.amount).replace(".", ",") : "");
   const [date, setDate] = useState(entry?.entry_date ?? todayISO());
   const [category, setCategory] = useState(entry?.category ?? "Otros");
-  const [cardId, setCardId] = useState(entry?.card_id ?? "");
+  // «p:id» = tarjeta privada, «c:id» = tarjeta del hogar, vacío = efectivo.
+  const [method, setMethod] = useState(entry?.personal_card_id ? `p:${entry.personal_card_id}` : entry?.card_id ? `c:${entry.card_id}` : "");
   const [error, setError] = useState("");
 
   const write = useMutation({
@@ -74,7 +76,9 @@ function EntryForm({ onClose, entry, userId, cards }: Props) {
       amount,
       entry_date: date,
       category: kind === "expense" ? category : "Otros",
-      card_id: kind === "expense" && cardId ? cardId : null,
+      // Un ingreso o un ahorro solo puede entrar/salir de una tarjeta privada.
+      card_id: kind === "expense" && method.startsWith("c:") ? method.slice(2) : null,
+      personal_card_id: method.startsWith("p:") && (kind === "expense" || personalCards.find((c) => c.id === method.slice(2))?.kind === "debit") ? method.slice(2) : null,
     };
     const supabase = createClient();
     try {
@@ -138,6 +142,20 @@ function EntryForm({ onClose, entry, userId, cards }: Props) {
         </div>
       </div>
 
+      {kind !== "expense" && personalCards.some((c) => c.kind === "debit") && (
+        <div>
+          <label className={label} htmlFor="m-card">{kind === "income" ? "Entró en" : "Salió de"}</label>
+          <select id="m-card" className={field} value={method} onChange={(e) => setMethod(e.target.value)}>
+            <option value="">Mi cuenta (sin tarjeta)</option>
+            {personalCards.filter((c) => c.kind === "debit").map((c) => (
+              <option key={c.id} value={`p:${c.id}`}>
+                {cardLabel(c)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {kind === "expense" && (
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -150,13 +168,26 @@ function EntryForm({ onClose, entry, userId, cards }: Props) {
           </div>
           <div>
             <label className={label} htmlFor="m-card">Pagado con</label>
-            <select id="m-card" className={field} value={cardId} onChange={(e) => setCardId(e.target.value)}>
+            <select id="m-card" className={field} value={method} onChange={(e) => setMethod(e.target.value)}>
               <option value="">Efectivo</option>
-              {cards.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {cardLabel(c)}
-                </option>
-              ))}
+              {personalCards.length > 0 && (
+                <optgroup label="Mis tarjetas (privadas)">
+                  {personalCards.map((c) => (
+                    <option key={c.id} value={`p:${c.id}`}>
+                      {cardLabel(c)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {cards.length > 0 && (
+                <optgroup label="Tarjetas del hogar">
+                  {cards.map((c) => (
+                    <option key={c.id} value={`c:${c.id}`}>
+                      {cardLabel(c)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
         </div>
