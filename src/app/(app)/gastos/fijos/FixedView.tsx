@@ -341,7 +341,7 @@ export function FixedView({ householdId, userId, people, cards, initialFixeds, i
         entries={entries}
         people={people}
         meId={userId}
-        cards={cards.filter((c) => c.kind === "credit")}
+        cards={cards}
         currentMonth={currentMonth}
         month={month}
         onChanged={refetch}

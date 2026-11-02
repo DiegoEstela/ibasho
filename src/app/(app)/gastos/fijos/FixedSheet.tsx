@@ -137,6 +137,8 @@ function FixedForm({ householdId, fixed, entries, people, meId, cards, currentMo
   const card = cards.find((c) => c.id === cardId);
   // Con tarjeta, paga su titular (o los dos, si es compartida); sin tarjeta hay que elegir quién.
   const payerLocked = !!card;
+  // Una tarjeta de débito que no cuenta en las deudas es la cuenta común: nadie paga, no genera deudas.
+  const poolCard = !!card && card.kind === "debit" && card.in_balance === false;
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -158,7 +160,7 @@ function FixedForm({ householdId, fixed, entries, people, meId, cards, currentMo
         category,
         is_subscription: subscription,
         card_id: cardId || null,
-        paid_by: payerLocked ? (card?.owner_user_id ?? null) : paidBy || null,
+        paid_by: payerLocked ? (poolCard ? null : (card?.owner_user_id ?? null)) : paidBy || null,
       },
       { onSuccess: onSaved, onError: () => setError("No se pudo guardar. Inténtalo de nuevo.") },
     );
@@ -217,10 +219,18 @@ function FixedForm({ householdId, fixed, entries, people, meId, cards, currentMo
           <select id="fx-card" className={field} value={cardId} onChange={(e) => setCardId(e.target.value)}>
             <option value="">Sin tarjeta</option>
             {cards.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}{c.last4 ? ` ···· ${c.last4}` : ""}</option>
+              <option key={c.id} value={c.id}>{c.name}{c.last4 ? ` ···· ${c.last4}` : ""}{c.kind === "debit" ? " · débito" : ""}</option>
             ))}
           </select>
-          {card && <p className="mt-1 text-xs text-ink-soft">Suma al total que pagas cuando cierra la tarjeta.</p>}
+          {card && (
+            <p className="mt-1 text-xs text-ink-soft">
+              {card.kind === "debit"
+                ? poolCard
+                  ? "Se descuenta del saldo de la cuenta y no genera deudas entre ustedes."
+                  : "Se descuenta del saldo de la tarjeta."
+                : "Suma al total que pagas cuando cierra la tarjeta."}
+            </p>
+          )}
         </div>
       )}
 

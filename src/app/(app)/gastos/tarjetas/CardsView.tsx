@@ -300,7 +300,8 @@ export function CardsView({
     .filter((r) => r.installments + r.fixed > 0);
   const monthlyInstallments = monthlyRows.reduce((s, r) => s + r.installments, 0);
   const monthlyFixed = monthlyRows.reduce((s, r) => s + r.fixed, 0);
-  const cardFixeds = fixeds.filter((f) => f.card_id && (!cardFilter || f.card_id === cardFilter) && isDueIn(f, currentMonth));
+  // Solo los cargados a tarjetas de crédito: los de débito se descuentan del saldo, no se pagan en el cierre.
+  const cardFixeds = fixeds.filter((f) => f.card_id && creditCards.some((c) => c.id === f.card_id) && (!cardFilter || f.card_id === cardFilter) && isDueIn(f, currentMonth));
 
   const projectionRows = useMemo<InstallmentRow[]>(() => {
     const ids = new Set(visiblePurchases.map((p) => p.id));

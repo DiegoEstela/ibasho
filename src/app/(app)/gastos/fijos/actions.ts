@@ -19,7 +19,7 @@ export async function sendFixedToExpenses(fixedId: string, month: string, amount
 
   const { data: fixed } = await supabase
     .from("fixed_expenses")
-    .select("id, name, category, paid_by, card_id, cards(owner_user_id)")
+    .select("id, name, category, paid_by, card_id, cards(owner_user_id, kind, in_balance)")
     .eq("id", fixedId)
     .maybeSingle();
   if (!fixed) return { ok: false, message: "No encontramos ese gasto fijo." };
@@ -48,8 +48,9 @@ export async function sendFixedToExpenses(fixedId: string, month: string, amount
   if ("error" in synced) return { ok: false, message: `No se pudo preparar Gastos (${synced.error.step}).` };
 
   // Paga quien se indicó; con una tarjeta, su titular; con una tarjeta compartida, nadie en particular.
-  const card = fixed.cards as unknown as { owner_user_id: string | null } | null;
-  const sharedCard = !!fixed.card_id && !!card && card.owner_user_id === null;
+  // Una débito marcada como «no cuenta en las deudas» también es cuenta común.
+  const card = fixed.cards as unknown as { owner_user_id: string | null; kind: string; in_balance: boolean | null } | null;
+  const sharedCard = !!fixed.card_id && !!card && (card.owner_user_id === null || (card.kind === "debit" && card.in_balance === false));
   const payerUser = sharedCard ? null : (card?.owner_user_id ?? fixed.paid_by ?? user.id);
   const payer = payerUser ? synced.participants.find((p) => p.user_id === payerUser) : undefined;
   if (payerUser && !payer) return { ok: false, message: "No se encontró a quien paga este gasto." };
