@@ -22,7 +22,7 @@ import { formatDate, type Expense, type Split } from "./types";
 type Mode = "equal" | "percent" | "exact";
 
 /** Lo mínimo de una tarjeta para elegirla al pagar. */
-export type PayCard = { id: string; name: string; last4: string | null; kind: "credit" | "debit"; owner_user_id: string | null; closing_day: number | null; due_day: number | null };
+export type PayCard = { id: string; name: string; last4: string | null; kind: "credit" | "debit"; owner_user_id: string | null; closing_day: number | null; due_day: number | null; in_balance?: boolean };
 
 type Props = {
   open: boolean;
@@ -116,14 +116,15 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
   // Un gasto nuevo con tarjeta de crédito no entra en Gastos: queda en la tarjeta, sin pagar, hasta que lo pases a Gastos desde allí.
   const creditPending = !expense && card?.kind === "credit";
   // Una tarjeta sin titular es de los dos: el dinero sale de la cuenta común y no hay un "pagador".
-  const sharedCard = !!card && card.owner_user_id === null;
+  // También las de débito marcadas como «no cuenta en las deudas».
+  const sharedCard = !!card && (card.owner_user_id === null || card.in_balance === false);
   // En el hogar (dos personas) una tarjeta compartida nunca tiene pagador; en un viaje, con amigos de por medio, se puede elegir.
   const forcedPool = sharedCard && !trip;
 
   function chooseCard(id: string) {
     setCardId(id);
     const chosen = cards.find((c) => c.id === id);
-    const owner = chosen?.owner_user_id ? participants.find((p) => p.user_id === chosen.owner_user_id) : undefined;
+    const owner = chosen?.owner_user_id && chosen.in_balance !== false ? participants.find((p) => p.user_id === chosen.owner_user_id) : undefined;
     if (owner) setPaidBy(owner.id);
     else if (chosen && trip) setPaidBy(""); // tarjeta compartida en un viaje: por defecto, sin pagador
     else if (!paidBy) setPaidBy(meId ?? ids[0] ?? "");
@@ -409,7 +410,7 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
 
       {forcedPool ? (
         <p className="rounded-xl bg-moss/15 px-3.5 py-3 text-sm text-forest">
-          Pagado con la tarjeta compartida: sale del dinero de los dos, así que no crea deudas entre ustedes.
+          Esta tarjeta no cuenta en las deudas: el gasto aparece en la lista, pero no suma ni resta a nadie.
         </p>
       ) : (
         <div>

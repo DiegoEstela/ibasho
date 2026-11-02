@@ -10,6 +10,8 @@ export type Card = {
   /** Solo las de crédito tienen día de pago. */
   due_day: number | null;
   initial_balance: number;
+  /** Débito: false = sus gastos salen en la lista pero no crean deudas entre las personas. */
+  in_balance: boolean;
   archived: boolean;
 };
 

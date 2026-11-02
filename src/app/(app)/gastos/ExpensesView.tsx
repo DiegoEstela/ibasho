@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { QueryErrorBanner } from "@/components/query/QueryErrorBanner";
 import { colorFor } from "@/lib/compras/icons";
 import { createClient } from "@/lib/supabase/client";
-import { netBalances, simplifyDebts, type Participant, type Transfer } from "@/lib/gastos/balance";
+import { netBalances, simplifyDebts, withoutPooledPayers, type Participant, type Transfer } from "@/lib/gastos/balance";
 import { expenseCategory, EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
 import { gastosKey, useGastos } from "@/lib/gastos/queries";
 import { formatEUR, toCents } from "@/lib/gastos/money";
@@ -163,7 +163,9 @@ export function ExpensesView({
   }, [supabase, householdId, groupId, refetch]);
 
   // ---------- Saldos ----------
-  const net = useMemo(() => netBalances(participants, expenses, splits, settlements), [participants, expenses, splits, settlements]);
+  // Los gastos de tarjetas que no cuentan en las deudas se tratan como pagados desde la cuenta común.
+  const balanceExpenses = useMemo(() => withoutPooledPayers(expenses, cards), [expenses, cards]);
+  const net = useMemo(() => netBalances(participants, balanceExpenses, splits, settlements), [participants, balanceExpenses, splits, settlements]);
   const transfers = useMemo(() => simplifyDebts(net), [net]);
   const myOwes = transfers.filter((t) => t.from === me?.id);
   const myOwed = transfers.filter((t) => t.to === me?.id);
@@ -249,11 +251,11 @@ export function ExpensesView({
   const perPerson = useMemo(() => {
     const paid = new Map<string, number>();
     const owed = new Map<string, number>();
-    for (const e of expenses) if (e.paid_by) paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + toCents(e.amount));
-    const payer = new Map(expenses.map((e) => [e.id, e.paid_by]));
+    for (const e of balanceExpenses) if (e.paid_by) paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + toCents(e.amount));
+    const payer = new Map(balanceExpenses.map((e) => [e.id, e.paid_by]));
     for (const sp of splits) if (payer.get(sp.expense_id)) owed.set(sp.participant_id, (owed.get(sp.participant_id) ?? 0) + toCents(sp.amount));
     return participants.map((p) => ({ p, paid: paid.get(p.id) ?? 0, owed: owed.get(p.id) ?? 0, net: net[p.id] ?? 0 }));
-  }, [participants, expenses, splits, net]);
+  }, [participants, balanceExpenses, splits, net]);
 
   const summary = useMemo(() => {
     const scope = expenses.filter((e) => !monthFilter || monthOf(e.expense_date) === monthFilter);

@@ -48,6 +48,7 @@ function CardForm({ card, people, meId, householdId, linkedCount, onSaved }: Pro
   const [closing, setClosing] = useState(card?.closing_day ? String(card.closing_day) : "");
   const [due, setDue] = useState(card?.due_day ? String(card.due_day) : "");
   const [balance, setBalance] = useState(card ? String(card.initial_balance).replace(".", ",") : "");
+  const [inBalance, setInBalance] = useState(card?.in_balance ?? true);
   const [error, setError] = useState("");
   // El error se muestra dentro del formulario (silent); al guardar, React Query actualiza las pantallas abiertas.
   const write = useMutation({
@@ -90,6 +91,8 @@ function CardForm({ card, people, meId, householdId, linkedCount, onSaved }: Pro
       closing_day: closingDay,
       due_day: dueDay,
       initial_balance: initial,
+      // Solo las de débito pueden quedar fuera de las cuentas entre ustedes.
+      ...(kind === "debit" ? { in_balance: inBalance } : {}),
     };
 
     const supabase = createClient();
@@ -204,6 +207,15 @@ function CardForm({ card, people, meId, householdId, linkedCount, onSaved }: Pro
             A partir de ahí, cada ingreso lo suma y cada gasto pagado con esta tarjeta lo descuenta.
             {card && " Si lo cambias, el saldo actual se ajusta en la misma cantidad."}
           </p>
+          <label className="mt-3 flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-line bg-surface px-3 py-2.5">
+            <input type="checkbox" checked={inBalance} onChange={(e) => setInBalance(e.target.checked)} className="mt-0.5 size-5 shrink-0 accent-forest" />
+            <span>
+              <span className="block text-sm font-medium">Cuenta en las deudas entre ustedes</span>
+              <span className="block text-xs text-ink-soft">
+                Si lo desmarcas, los gastos pagados con esta tarjeta salen en la lista de Gastos y en la tarjeta, pero no suman ni restan deudas a nadie.
+              </span>
+            </span>
+          </label>
         </div>
       )}
 

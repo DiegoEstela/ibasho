@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { requireHousehold } from "@/lib/household";
 import { createClient } from "@/lib/supabase/server";
-import { netBalances, simplifyDebts, type Participant } from "@/lib/gastos/balance";
+import { netBalances, simplifyDebts, withoutPooledPayers, type Participant } from "@/lib/gastos/balance";
 import { toCents } from "@/lib/gastos/money";
 import { isInstallmentPaid } from "@/lib/tarjetas/installments";
 import { personCents } from "@/lib/tarjetas/summary";
@@ -20,7 +20,7 @@ async function Resumen() {
   // La semana termina el domingo.
   const weekEnd = addDays(todayMadrid, (7 - new Date(`${todayMadrid}T00:00:00Z`).getUTCDay()) % 7);
 
-  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements, cInstallments, cShares, nNotes, nReads, vTrips, wItems, hNotes, tTasks] =
+  const [{ user, household }, { data: pending }, { data: recipes }, { data: profiles }, { data: me }, { data: recent }, gParts, gExpenses, gSplits, gSettlements, cInstallments, cShares, nNotes, nReads, vTrips, wItems, hNotes, tTasks, gCards] =
     await Promise.all([
       requireHousehold(),
       supabase.from("shopping_items").select("name").eq("done", false).order("created_at", { ascending: false }).limit(200),
@@ -33,7 +33,7 @@ async function Resumen() {
         .order("created_at", { ascending: false })
         .limit(60),
       supabase.from("expense_participants").select("id, user_id, name, color, expense_groups!inner(kind)").eq("expense_groups.kind", "household"),
-      supabase.from("expenses").select("id, paid_by, amount, expense_groups!inner(kind)").eq("expense_groups.kind", "household").limit(2000),
+      supabase.from("expenses").select("id, paid_by, card_id, amount, expense_groups!inner(kind)").eq("expense_groups.kind", "household").limit(2000),
       supabase
         .from("expense_splits")
         .select("expense_id, participant_id, amount, expenses!inner(group_id, expense_groups!inner(kind))")
@@ -55,6 +55,8 @@ async function Resumen() {
         .order("due_date")
         .order("remind_time", { nullsFirst: false })
         .limit(200),
+      // Tarjetas que no cuentan en las deudas (si falta la migración 0032, simplemente no hay ninguna).
+      supabase.from("cards").select("id, in_balance").eq("in_balance", false),
     ]);
 
   // Si la migración 0004 aún no se ejecutó, la columna no existe y se usan los widgets por defecto.
@@ -63,10 +65,10 @@ async function Resumen() {
   // Balance del hogar para el widget de Gastos (si la migración 0005 no está, queda en "sin gastos").
   const parts = (gParts.data ?? []) as unknown as Participant[];
   const meParticipant = parts.find((p) => p.user_id === user.id);
-  const expensesData = (gExpenses.data ?? []) as unknown as { id: string; paid_by: string; amount: number }[];
+  const expensesData = (gExpenses.data ?? []) as unknown as { id: string; paid_by: string | null; card_id: string | null; amount: number }[];
   const net = netBalances(
     parts,
-    expensesData,
+    withoutPooledPayers(expensesData, (gCards.data ?? []) as { id: string; in_balance: boolean }[]),
     (gSplits.data ?? []) as unknown as { expense_id: string; participant_id: string; amount: number }[],
     (gSettlements.data ?? []) as unknown as { from_participant: string; to_participant: string; amount: number }[],
   );

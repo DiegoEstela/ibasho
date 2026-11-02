@@ -1,6 +1,16 @@
 export type Participant = { id: string; user_id: string | null; name: string; color: string };
 // paid_by nulo = pagado desde una tarjeta compartida: no genera deudas entre las personas.
 export type ExpenseRow = { id: string; paid_by: string | null; amount: number };
+
+/** Quita el pagador a los gastos de tarjetas que no cuentan en las deudas (así ni suman ni restan a nadie). */
+export function withoutPooledPayers<T extends { paid_by: string | null; card_id: string | null }>(
+  expenses: T[],
+  cards: { id: string; in_balance?: boolean }[],
+): T[] {
+  const pooled = new Set(cards.filter((c) => c.in_balance === false).map((c) => c.id));
+  if (pooled.size === 0) return expenses;
+  return expenses.map((e) => (e.card_id && pooled.has(e.card_id) ? { ...e, paid_by: null } : e));
+}
 export type SplitRow = { expense_id: string; participant_id: string; amount: number };
 export type SettlementRow = { from_participant: string; to_participant: string; amount: number };
 export type Transfer = { from: string; to: string; cents: number };
