@@ -7,7 +7,8 @@ import { BottomSheet } from "@/components/ui/BottomSheet";
 import { EXPENSE_CATEGORIES } from "@/lib/gastos/categories";
 import { formatEUR, parseAmount, toCents } from "@/lib/gastos/money";
 import { uploadFixedFile } from "@/lib/fijos/files";
-import { removeFiles, signedUrl } from "@/lib/viajes/storage";
+import { useFileUrls } from "@/lib/fijos/useFileUrls";
+import { removeFiles } from "@/lib/viajes/storage";
 import { amountCents, historyOf, isDueIn, monthOf, type Fixed, type FixedEntry } from "@/lib/fijos/schedule";
 import { createClient } from "@/lib/supabase/client";
 import type { Card, Person } from "../tarjetas/types";
@@ -123,16 +124,10 @@ function FixedForm({ householdId, fixed, entries, people, meId, cards, currentMo
     onChanged();
   }
 
-  async function view(path: string) {
-    // Se abre la pestaña antes de esperar para que el móvil no bloquee la ventana.
-    const tab = window.open("", "_blank");
-    const url = await signedUrl(createClient(), path);
-    if (url && tab) tab.location.href = url;
-    else {
-      tab?.close();
-      setFileNote("No se pudo abrir el archivo.");
-    }
-  }
+  // Enlaces ya listos: un <a target="_blank"> real se abre siempre en el móvil, sin bloqueos de ventanas.
+  const fileUrls = useFileUrls(
+    fixed ? [monthEntry?.file_path, ...historyOf(fixed.id, entries).map((h) => h.file_path)].filter((p): p is string => !!p) : [],
+  );
 
   const card = cards.find((c) => c.id === cardId);
   // Con tarjeta, paga su titular (o los dos, si es compartida); sin tarjeta hay que elegir quién.
@@ -260,10 +255,16 @@ function FixedForm({ householdId, fixed, entries, people, meId, cards, currentMo
           <span className={label}>Factura de {monthText}</span>
           {monthEntry?.file_path ? (
             <div className="flex min-h-11 items-center gap-2 rounded-xl border border-line bg-surface px-3 text-sm">
-              <button type="button" onClick={() => view(monthEntry.file_path!)} className="flex min-w-0 flex-1 items-center gap-2 text-left font-medium text-forest">
+              <a
+                href={fileUrls[monthEntry.file_path]}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-disabled={!fileUrls[monthEntry.file_path]}
+                className={`flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left font-medium text-forest ${fileUrls[monthEntry.file_path] ? "" : "pointer-events-none opacity-60"}`}
+              >
                 <Paperclip size={16} className="shrink-0" />
                 <span className="truncate">{monthEntry.file_name ?? "Ver factura"}</span>
-              </button>
+              </a>
               <button type="button" onClick={() => detach(monthEntry)} disabled={fileBusy} aria-label="Quitar archivo" className="flex size-9 shrink-0 items-center justify-center rounded-full text-ink-soft">
                 <X size={16} />
               </button>
@@ -301,9 +302,16 @@ function FixedForm({ householdId, fixed, entries, people, meId, cards, currentMo
                   <span className="capitalize">{text}</span>
                   <span className="flex items-center gap-2">
                     {h.file_path && (
-                      <button type="button" onClick={() => view(h.file_path!)} aria-label={`Ver la factura de ${text}`} className="flex size-9 items-center justify-center text-forest">
+                      <a
+                        href={fileUrls[h.file_path]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Ver la factura de ${text}`}
+                        aria-disabled={!fileUrls[h.file_path]}
+                        className={`flex size-9 items-center justify-center text-forest ${fileUrls[h.file_path] ? "" : "pointer-events-none opacity-60"}`}
+                      >
                         <Paperclip size={16} />
-                      </button>
+                      </a>
                     )}
                     <span className="font-medium">{formatEUR(toCents(Number(h.amount)))}</span>
                   </span>

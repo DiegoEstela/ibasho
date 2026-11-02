@@ -71,3 +71,13 @@ export async function removeFiles(supabase: SupabaseClient, paths: string[]) {
 
 export const isImage = (mime: string | null | undefined, name?: string | null) =>
   !!mime?.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(name ?? "");
+
+/** Enlaces temporales para varios archivos privados a la vez (ruta → enlace). */
+export async function signedUrls(supabase: SupabaseClient, paths: string[], seconds = 3600): Promise<Record<string, string>> {
+  const list = [...new Set(paths.filter(Boolean))];
+  if (list.length === 0) return {};
+  const { data } = await supabase.storage.from(BUCKET).createSignedUrls(list, seconds);
+  const out: Record<string, string> = {};
+  for (const item of data ?? []) if (item.path && item.signedUrl) out[item.path] = item.signedUrl;
+  return out;
+}

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { Check, ChevronLeft, ChevronRight, Plus, Repeat, Send } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Paperclip, Plus, Repeat, Send } from "lucide-react";
 import { GastosTabs } from "@/components/ui/GastosTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { QueryErrorBanner } from "@/components/query/QueryErrorBanner";
@@ -15,6 +15,7 @@ import { fijosKey, useFijos } from "@/lib/fijos/queries";
 import {
   addMonths, amountCents, dueDateIn, everyLabel, isDueIn, nextDueMonth, type Fixed, type FixedEntry,
 } from "@/lib/fijos/schedule";
+import { useFileUrls } from "@/lib/fijos/useFileUrls";
 import { createClient } from "@/lib/supabase/client";
 import { removeFiles } from "@/lib/viajes/storage";
 import type { Card, Person } from "../tarjetas/types";
@@ -110,6 +111,9 @@ export function FixedView({ householdId, userId, people, cards, initialFixeds, i
   });
 
   const entryOf = (fixedId: string) => entries.find((e) => e.fixed_id === fixedId && e.month.slice(0, 7) === month);
+  // Factura (PDF o foto) del mes: se muestra un clip amarillo en la fila para abrirla directamente.
+  const fileOf = (fixedId: string) => entryOf(fixedId)?.file_path ?? null;
+  const fileUrls = useFileUrls(entries.filter((e) => e.month.slice(0, 7) === month && e.file_path).map((e) => e.file_path!));
 
   const dueNow = useMemo(() => fixeds.filter((f) => isDueIn(f, month)), [fixeds, month]);
   const notNow = useMemo(() => fixeds.filter((f) => !isDueIn(f, month)), [fixeds, month]);
@@ -260,6 +264,20 @@ export function FixedView({ householdId, userId, people, cards, initialFixeds, i
                       <span className="block truncate text-[15px] font-medium leading-tight">{f.name}</span>
                       <span className="block truncate text-[11px] text-ink-soft">{meta(f)}</span>
                     </button>
+
+                    {fileOf(f.id) && (
+                      <a
+                        href={fileUrls[fileOf(f.id)!]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Ver la factura de ${f.name}`}
+                        title="Ver la factura"
+                        aria-disabled={!fileUrls[fileOf(f.id)!]}
+                        className={`flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber/25 text-amber ${fileUrls[fileOf(f.id)!] ? "" : "pointer-events-none opacity-60"}`}
+                      >
+                        <Paperclip size={16} />
+                      </a>
+                    )}
 
                     <div className="relative w-[5.5rem] shrink-0">
                       <input
