@@ -2,16 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Banknote, CreditCard, Download, Plus, Trash2, Users } from "lucide-react";
+import { Banknote, CreditCard, Download, Plus, Send, Trash2, Users } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { CatIcon } from "@/components/ui/CatIcon";
 import { colorFor } from "@/lib/compras/icons";
 import { createClient } from "@/lib/supabase/client";
-import { netBalances, simplifyDebts, type Participant, type Transfer } from "@/lib/gastos/balance";
+import { netBalances, simplifyDebts, withoutPooledPayers, type Participant, type Transfer } from "@/lib/gastos/balance";
 import { expenseCategory } from "@/lib/gastos/categories";
 import { formatMoney } from "@/lib/gastos/currency";
 import { formatEUR, toCents } from "@/lib/gastos/money";
-import { ensureTripGroup, syncParticipants } from "@/lib/gastos/setup";
+import { ensureGroupId, ensureTripGroup, syncParticipants } from "@/lib/gastos/setup";
 import { cardLabel } from "@/lib/tarjetas/labels";
 import { ExpenseSheet, type PayCard } from "../../gastos/ExpenseSheet";
 import { SettleSheet } from "../../gastos/SettleSheet";
@@ -66,6 +66,9 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
   const [settleSheet, setSettleSheet] = useState<{ open: boolean; suggestion: Transfer | null }>({ open: false, suggestion: null });
   const [peopleOpen, setPeopleOpen] = useState(false);
   const [settlementDetail, setSettlementDetail] = useState<Settlement | null>(null);
+  const [sendTransfer, setSendTransfer] = useState<Transfer | null>(null);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState("");
 
   // ---------- Carga: grupo del viaje, personas y movimientos ----------
   const loadMovements = useCallback(
@@ -75,7 +78,7 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
         supabase.from("expenses").select("*").eq("group_id", groupId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
         supabase.from("expense_splits").select("expense_id, participant_id, amount, expenses!inner(group_id)").eq("expenses.group_id", groupId).limit(10000),
         supabase.from("settlements").select("*").eq("group_id", groupId).order("settled_on", { ascending: false }).limit(500),
-        supabase.from("cards").select("id, name, last4, kind, owner_user_id, closing_day, due_day").eq("archived", false).order("created_at"),
+        supabase.from("cards").select("id, name, last4, kind, owner_user_id, closing_day, due_day, in_balance").eq("archived", false).order("created_at"),
       ]);
       const failed = [participants, expenses, splits, settlements, cards].find((r) => r.error);
       if (failed?.error) return { error: `${failed.error.code}: ${failed.error.message}` } as const;
@@ -199,18 +202,21 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
     [participants, me],
   );
 
-  const net = useMemo(() => netBalances(participants, expenses, splits, settlements), [participants, expenses, splits, settlements]);
+  // Los gastos de cuentas compartidas (sin pagador) suman al total, pero ni suman ni restan en el balance.
+  const balanceExpenses = useMemo(() => withoutPooledPayers(expenses, cards), [expenses, cards]);
+  const pooledIds = useMemo(() => new Set(balanceExpenses.filter((e) => e.paid_by === null).map((e) => e.id)), [balanceExpenses]);
+  const net = useMemo(() => netBalances(participants, balanceExpenses, splits, settlements), [participants, balanceExpenses, splits, settlements]);
   const transfers = useMemo(() => simplifyDebts(net), [net]);
 
   /** Cuánto puso y cuánto le corresponde a cada persona, para ver las cuentas de un vistazo. */
   const perPerson = useMemo(() => {
     const paid = new Map<string, number>();
     const owed = new Map<string, number>();
-    for (const e of expenses) if (e.paid_by) paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + toCents(e.amount));
-    const payer = new Map(expenses.map((e) => [e.id, e.paid_by]));
+    for (const e of balanceExpenses) if (e.paid_by) paid.set(e.paid_by, (paid.get(e.paid_by) ?? 0) + toCents(e.amount));
+    const payer = new Map(balanceExpenses.map((e) => [e.id, e.paid_by]));
     for (const s of splits) if (payer.get(s.expense_id)) owed.set(s.participant_id, (owed.get(s.participant_id) ?? 0) + toCents(s.amount));
     return participants.map((p) => ({ p, paid: paid.get(p.id) ?? 0, owed: owed.get(p.id) ?? 0, net: net[p.id] ?? 0 }));
-  }, [participants, expenses, splits, net]);
+  }, [participants, balanceExpenses, splits, net]);
 
   const usedIds = useMemo(() => {
     const used = new Set<string>();
@@ -257,6 +263,70 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
     setData((d) => (d ? { ...d, settlements: d.settlements.filter((s) => s.id !== settlement.id) } : d));
     const { error } = await supabase.from("settlements").delete().eq("id", settlement.id);
     if (error) refetch();
+  }
+
+  /**
+   * Pasa una deuda del balance del viaje a Gastos compartidos: un gasto del hogar pagado por quien debe cobrar
+   * y repartido 100 % a quien debe. En el viaje queda un pago registrado para que no se envíe dos veces.
+   */
+  async function sendToHousehold(t: Transfer) {
+    setSendError("");
+    const from = participants.find((p) => p.id === t.from);
+    const to = participants.find((p) => p.id === t.to);
+    if (!from?.user_id || !to?.user_id) return setSendError("Solo se pueden enviar deudas entre personas del hogar.");
+    setSending(true);
+    let expenseId: string | null = null;
+    try {
+      const home = await ensureGroupId(supabase, householdId);
+      if ("error" in home) throw new Error(home.error.detail);
+      const { data: people, error: peopleError } = await supabase
+        .from("expense_participants")
+        .select("id, user_id")
+        .eq("group_id", home.groupId)
+        .in("user_id", [from.user_id, to.user_id]);
+      if (peopleError) throw new Error(peopleError.message);
+      const debtor = people?.find((x) => x.user_id === from.user_id)?.id as string | undefined;
+      const creditor = people?.find((x) => x.user_id === to.user_id)?.id as string | undefined;
+      if (!debtor || !creditor) throw new Error("Abre Gastos del hogar una vez para que aparezcan las dos personas.");
+
+      const amount = t.cents / 100;
+      const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
+      const { data: id, error: saveError } = await supabase.rpc("save_expense", {
+        p_id: null,
+        p_group: home.groupId,
+        p_description: `Viaje ${trip.name} · balance`,
+        p_amount: amount,
+        p_date: today,
+        p_category: "Viajes",
+        p_paid_by: creditor,
+        p_splits: [{ participant_id: debtor, amount }],
+        p_card: null,
+        p_currency: "EUR",
+        p_original_amount: null,
+        p_rate: null,
+      });
+      if (saveError) throw new Error(saveError.message);
+      expenseId = id as string;
+
+      const { error: settleError } = await supabase.from("settlements").insert({
+        household_id: householdId,
+        group_id: groupId,
+        from_participant: t.from,
+        to_participant: t.to,
+        amount,
+        settled_on: today,
+        note: "Enviado a Gastos compartidos",
+      });
+      if (settleError) throw new Error(settleError.message);
+    } catch {
+      // Si falla el pago del viaje, se deshace el gasto para no duplicar la deuda.
+      if (expenseId) await supabase.from("expenses").delete().eq("id", expenseId);
+      setSending(false);
+      return setSendError("No se pudo enviar. Revisa tu conexión e inténtalo de nuevo.");
+    }
+    setSending(false);
+    setSendTransfer(null);
+    refetch();
   }
 
   function exportCsv() {
@@ -360,9 +430,15 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
                     <span className="min-w-0 truncate">
                       {nameOf(t.from)} → {nameOf(t.to)} · <span className="font-medium">{formatEUR(t.cents)}</span>
                     </span>
-                    <button onClick={() => setSettleSheet({ open: true, suggestion: t })} className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-forest/15 px-3 text-xs font-medium text-forest transition active:scale-95">
-                      <Banknote size={14} /> Saldar
-                    </button>
+                    {participants.find((p) => p.id === t.from)?.user_id && participants.find((p) => p.id === t.to)?.user_id ? (
+                      <button onClick={() => { setSendError(""); setSendTransfer(t); }} className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-forest/15 px-3 text-xs font-medium text-forest transition active:scale-95">
+                        <Send size={14} /> Enviar a gastos compartidos
+                      </button>
+                    ) : (
+                      <button onClick={() => setSettleSheet({ open: true, suggestion: t })} className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-forest/15 px-3 text-xs font-medium text-forest transition active:scale-95">
+                        <Banknote size={14} /> Saldar
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -493,10 +569,11 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
                 const e = row.expense;
                 const cat = expenseCategory(e.category);
                 const mine = mySplit(e.id);
+                const pooled = pooledIds.has(e.id);
                 return (
-                  <li key={row.key}>
+                  <li key={row.key} className={pooled ? "opacity-60" : undefined}>
                     <button onClick={() => setExpenseSheet({ open: true, expense: e })} className="flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left">
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl" style={{ background: `color-mix(in srgb, ${colorFor(cat.color)} 20%, transparent)`, color: colorFor(cat.color) }}>
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl" style={{ background: `color-mix(in srgb, ${pooled ? "var(--ink-soft)" : colorFor(cat.color)} 20%, transparent)`, color: pooled ? "var(--ink-soft)" : colorFor(cat.color) }}>
                         <CatIcon name={cat.icon} size={18} strokeWidth={1.75} />
                       </span>
                       <span className="min-w-0 flex-1">
@@ -512,7 +589,9 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
                         <span className="block text-[11px] text-ink-soft">
                           {e.currency !== "EUR" && e.original_amount
                             ? formatMoney(e.original_amount, e.currency)
-                            : mine > 0
+                            : pooled
+                              ? "Cuenta compartida"
+                              : mine > 0
                               ? `Tu parte ${formatEUR(toCents(mine))}`
                               : "No participas"}
                         </span>
@@ -554,6 +633,27 @@ export function TripExpensesTab({ trip, householdId, userId, userEmail }: Props)
         suggestion={settleSheet.suggestion}
         onSaved={onSaved}
       />
+
+      <BottomSheet open={!!sendTransfer} onClose={() => !sending && setSendTransfer(null)} title="Enviar a gastos compartidos">
+        {sendTransfer && (
+          <div className="flex flex-col gap-4">
+            <p className="text-[15px]">
+              Se anotará en Gastos compartidos como <span className="font-medium">«Viaje {trip.name} · balance»</span>: lo pagó{" "}
+              {nameOf(sendTransfer.to)} y se reparte entero a {nameOf(sendTransfer.from)}, por{" "}
+              <span className="font-medium">{formatEUR(sendTransfer.cents)}</span>.
+            </p>
+            <p className="text-sm text-ink-soft">En el viaje quedará registrado como pago, así el balance se queda a cero y no se envía dos veces.</p>
+            {sendError && <p role="alert" className="rounded-xl bg-hanko/10 px-4 py-3 text-sm text-hanko">{sendError}</p>}
+            <button
+              disabled={sending}
+              onClick={() => sendToHousehold(sendTransfer)}
+              className="min-h-12 rounded-2xl bg-forest px-8 text-base font-medium text-surface shadow-sm transition active:scale-95 disabled:opacity-60"
+            >
+              {sending ? "Enviando…" : "Enviar"}
+            </button>
+          </div>
+        )}
+      </BottomSheet>
 
       <PeopleSheet
         open={peopleOpen}

@@ -95,6 +95,8 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
   const [cardId, setCardId] = useState(expense?.card_id ?? "");
   // "" = sin pagador (sale de una tarjeta compartida); solo se usa con una tarjeta sin titular.
   const [paidBy, setPaidBy] = useState(expense ? (expense.paid_by ?? "") : (meId ?? ids[0] ?? ""));
+  // Solo en viajes: el gasto salió de una cuenta compartida, así que cuenta en el total pero no en el balance.
+  const [pooled, setPooled] = useState(!!trip && !!expense && expense.paid_by === null);
   const [mode, setMode] = useState<Mode>(initial.mode);
   const [included, setIncluded] = useState<Set<string>>(initial.included);
   const [percents, setPercents] = useState<Record<string, string>>(() => evenPercents(ids));
@@ -120,13 +122,18 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
   const sharedCard = !!card && (card.owner_user_id === null || card.in_balance === false);
   // En el hogar (dos personas) una tarjeta compartida nunca tiene pagador; en un viaje, con amigos de por medio, se puede elegir.
   const forcedPool = sharedCard && !trip;
+  // Sin pagador: no crea deudas (cuenta común en el hogar; casilla marcada en un viaje).
+  const noPayer = forcedPool || (!!trip && pooled);
 
   function chooseCard(id: string) {
     setCardId(id);
     const chosen = cards.find((c) => c.id === id);
     const owner = chosen?.owner_user_id && chosen.in_balance !== false ? participants.find((p) => p.user_id === chosen.owner_user_id) : undefined;
-    if (owner) setPaidBy(owner.id);
-    else if (chosen && trip) setPaidBy(""); // tarjeta compartida en un viaje: por defecto, sin pagador
+    if (owner) {
+      setPaidBy(owner.id);
+      setPooled(false);
+    }
+    else if (chosen && trip) setPooled(true); // tarjeta compartida en un viaje: por defecto, sin pagador
     else if (!paidBy) setPaidBy(meId ?? ids[0] ?? "");
   }
 
@@ -190,7 +197,7 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
     e.preventDefault();
     setError("");
     if (!description.trim()) return setError("Escribe en qué fue el gasto.");
-    if (!sharedCard && !paidBy) return setError("Elige quién pagó el gasto.");
+    if (!noPayer && !paidBy) return setError("Elige quién pagó el gasto.");
     if (foreign && !rate) return setError("Escribe la cotización: cuántas unidades de esa moneda equivalen a 1 euro.");
     if (!amount || amount <= 0) return setError("Escribe un importe válido, por ejemplo 12,50.");
 
@@ -226,7 +233,7 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
           p_installments: rows.map((r) => ({ number: r.number, due_date: r.due_date, amount: r.cents / 100 })),
           p_trip: tripId ?? null,
           p_category: category,
-          p_split: { paid_by: forcedPool ? null : paidBy || null, parts: result },
+          p_split: { paid_by: noPayer ? null : paidBy || null, parts: result },
         });
         if (rpcError) throw new Error(rpcError.message);
       } catch {
@@ -247,7 +254,7 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
         p_amount: amount,
         p_date: date,
         p_category: category,
-        p_paid_by: forcedPool ? null : paidBy || null,
+        p_paid_by: noPayer ? null : paidBy || null,
         p_card: cardId || null,
         p_currency: foreign ? currency : "EUR",
         p_original_amount: foreign ? typed : null,
@@ -413,17 +420,37 @@ function ExpenseForm({ groupId, participants, meId, cards, trip, tripId, expense
           Esta tarjeta no cuenta en las deudas: el gasto aparece en la lista, pero no suma ni resta a nadie.
         </p>
       ) : (
-        <div>
-          <label className={label} htmlFor="g-paid">¿Quién pagó?</label>
-          <select id="g-paid" className={field} value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>
-            {sharedCard && <option value="">Cuenta compartida (no crea deudas)</option>}
-            {participants.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.user_id && p.id === meId ? `${p.name} (tú)` : p.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        <>
+          {trip && (
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-moss/15 px-3.5 py-3 text-sm text-forest">
+              <input
+                type="checkbox"
+                checked={pooled}
+                onChange={(e) => {
+                  setPooled(e.target.checked);
+                  if (!e.target.checked && !paidBy) setPaidBy(meId ?? ids[0] ?? "");
+                }}
+                className="mt-0.5 size-5 shrink-0 accent-[var(--forest)]"
+              />
+              <span>
+                <span className="block font-medium">Se pagó con una cuenta compartida</span>
+                <span className="block text-xs">Suma al total del viaje, pero no entra en el balance: nadie le debe nada a nadie.</span>
+              </span>
+            </label>
+          )}
+          {!noPayer && (
+            <div>
+              <label className={label} htmlFor="g-paid">¿Quién pagó?</label>
+              <select id="g-paid" className={field} value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>
+                {participants.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.user_id && p.id === meId ? `${p.name} (tú)` : p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </>
       )}
 
       <div>

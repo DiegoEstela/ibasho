@@ -168,6 +168,8 @@ export function ExpensesView({
   // ---------- Saldos ----------
   // Los gastos de tarjetas que no cuentan en las deudas se tratan como pagados desde la cuenta común.
   const balanceExpenses = useMemo(() => withoutPooledPayers(expenses, cards), [expenses, cards]);
+  // Gastos que no suman ni restan (cuenta común): se pintan en gris y sin «tu parte».
+  const pooledIds = useMemo(() => new Set(balanceExpenses.filter((e) => e.paid_by === null).map((e) => e.id)), [balanceExpenses]);
   const net = useMemo(() => netBalances(participants, balanceExpenses, splits, settlements), [participants, balanceExpenses, splits, settlements]);
   const transfers = useMemo(() => simplifyDebts(net), [net]);
   const myOwes = transfers.filter((t) => t.from === me?.id);
@@ -480,6 +482,7 @@ export function ExpensesView({
                     payer={payerOf(row.expense)}
                     cardText={cardOf(row.expense.card_id) ? cardLabel(cardOf(row.expense.card_id)!) : null}
                     mine={mySplit(row.expense.id)}
+                    pooled={pooledIds.has(row.expense.id)}
                     hasFile={filedExpenseIds.includes(row.expense.id)}
                     onOpen={() => setExpenseSheet({ open: true, expense: row.expense })}
                   />
@@ -730,6 +733,7 @@ function ExpenseItem({
   payer,
   cardText,
   mine,
+  pooled,
   hasFile,
   onOpen,
 }: {
@@ -737,14 +741,16 @@ function ExpenseItem({
   payer: string;
   cardText: string | null;
   mine: number;
+  /** Sale de una cuenta común: no crea deudas, así que se ve apagado y sin «tu parte». */
+  pooled: boolean;
   /** Tiene una factura (PDF o foto) para descargar: el icono se pinta en amarillo. */
   hasFile: boolean;
   onOpen: () => void;
 }) {
   const cat = expenseCategory(expense.category);
-  const color = hasFile ? "var(--amber)" : colorFor(cat.color);
+  const color = pooled ? "var(--ink-soft)" : hasFile ? "var(--amber)" : colorFor(cat.color);
   return (
-    <li>
+    <li className={pooled ? "opacity-60" : undefined}>
       <button onClick={onOpen} className={rowButton}>
         <span
           className="flex size-8 shrink-0 items-center justify-center rounded-lg"
@@ -763,7 +769,9 @@ function ExpenseItem({
         </span>
         <span className="text-right">
           <span className="block text-sm font-medium">{formatEUR(toCents(expense.amount))}</span>
-          <span className="block text-[10px] text-ink-soft">{mine > 0 ? `Tu parte ${formatEUR(toCents(mine))}` : "No participas"}</span>
+          <span className="block text-[10px] text-ink-soft">
+            {pooled ? "Cuenta común" : mine > 0 ? `Tu parte ${formatEUR(toCents(mine))}` : "No participas"}
+          </span>
         </span>
       </button>
     </li>
