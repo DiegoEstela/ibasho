@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { CardsView } from "./CardsView";
 import type { CardExpenseRow, CardExpenseSplit, DepositRow } from "@/lib/tarjetas/debit";
 import type { Fixed, FixedEntry } from "@/lib/fijos/schedule";
-import type { Card, Installment, Person, Purchase, Share } from "./types";
+import type { Card, Installment, Person, Purchase, PurchaseItem, Share } from "./types";
 
 function Unavailable({ step, detail }: { step: string; detail: string }) {
   console.error(`[tarjetas] ${step}: ${detail}`);
@@ -30,7 +30,7 @@ function Unavailable({ step, detail }: { step: string; detail: string }) {
 async function Tarjetas() {
   const supabase = await createClient();
 
-  const [{ user, household }, cards, purchases, shares, installments, members, profiles, deposits, cardExpenses, participants, splits, fixeds, fixedEntries] = await Promise.all([
+  const [{ user, household }, cards, purchases, shares, installments, members, profiles, deposits, cardExpenses, participants, splits, fixeds, fixedEntries, items] = await Promise.all([
     requireHousehold(),
     supabase.from("cards").select("*").eq("archived", false).order("created_at"),
     supabase.from("card_purchases").select("*").order("purchase_date", { ascending: false }).order("created_at", { ascending: false }).limit(1000),
@@ -44,6 +44,7 @@ async function Tarjetas() {
     supabase.from("expense_splits").select("expense_id, participant_id, amount").limit(20000),
     supabase.from("fixed_expenses").select("*").eq("archived", false).order("created_at").limit(500),
     supabase.from("fixed_expense_entries").select("id, fixed_id, month, amount, expense_id").order("month", { ascending: false }).limit(5000),
+    supabase.from("card_purchase_items").select("id, purchase_id, name, amount, user_id, position").order("position").limit(20000),
   ]);
 
   const failed = [
@@ -72,6 +73,7 @@ async function Tarjetas() {
       initialCards={(cards.data ?? []) as Card[]}
       initialPurchases={(purchases.data ?? []) as Purchase[]}
       initialShares={(shares.data ?? []) as Share[]}
+      initialItems={(items.error ? [] : (items.data ?? [])) as PurchaseItem[]}
       initialInstallments={(installments.data ?? []) as Installment[]}
       initialDeposits={(deposits.data ?? []) as DepositRow[]}
       initialCardExpenses={(cardExpenses.data ?? []) as CardExpenseRow[]}

@@ -27,7 +27,7 @@ import { ProjectionChart } from "./ProjectionChart";
 import { PurchaseDetail } from "./PurchaseDetail";
 import { PurchaseSheet } from "./PurchaseSheet";
 import { SendToExpensesSheet } from "./SendToExpensesSheet";
-import type { Card, Installment, Person, Purchase, Share } from "./types";
+import type { Card, Installment, Person, Purchase, PurchaseItem, Share } from "./types";
 
 type Props = {
   householdId: string;
@@ -36,6 +36,7 @@ type Props = {
   initialCards: Card[];
   initialPurchases: Purchase[];
   initialShares: Share[];
+  initialItems: PurchaseItem[];
   initialInstallments: Installment[];
   initialDeposits: DepositRow[];
   /** Gastos pagados con alguna tarjeta (para descontar del saldo de las de débito). */
@@ -70,6 +71,7 @@ export function CardsView({
   initialCards,
   initialPurchases,
   initialShares,
+  initialItems,
   initialInstallments,
   initialDeposits,
   initialCardExpenses,
@@ -85,7 +87,7 @@ export function CardsView({
 
   const queryClient = useQueryClient();
   const {
-    data: { cards, purchases, shares, installments, deposits, cardExpenses, splits },
+    data: { cards, purchases, shares, items, installments, deposits, cardExpenses, splits },
     patch,
     isError,
     isFetching,
@@ -93,6 +95,7 @@ export function CardsView({
     cards: initialCards,
     purchases: initialPurchases,
     shares: initialShares,
+    items: initialItems,
     installments: initialInstallments,
     deposits: initialDeposits,
     cardExpenses: initialCardExpenses,
@@ -136,6 +139,7 @@ export function CardsView({
       .on("postgres_changes", { event: "*", schema: "public", table: "cards", filter }, queue)
       .on("postgres_changes", { event: "*", schema: "public", table: "card_purchases", filter }, queue)
       .on("postgres_changes", { event: "*", schema: "public", table: "card_installments", filter }, queue)
+      .on("postgres_changes", { event: "*", schema: "public", table: "card_purchase_items", filter }, queue)
       .on("postgres_changes", { event: "*", schema: "public", table: "card_deposits", filter }, queue)
       .on("postgres_changes", { event: "*", schema: "public", table: "expenses", filter }, queue)
       .subscribe();
@@ -758,6 +762,7 @@ export function CardsView({
         card={cards.find((c) => c.id === detail?.card_id)}
         people={people}
         shares={detailShares}
+        items={items.filter((i) => i.purchase_id === detailId)}
         installments={installments.filter((i) => i.purchase_id === detailId)}
         today={today}
         alone={people.length < 2 && !detail?.trip_id}

@@ -2,13 +2,16 @@
 
 import { useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { Plus, X } from "lucide-react";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { createClient } from "@/lib/supabase/client";
 import { evenPercents, formatEUR, parseAmount, toCents } from "@/lib/gastos/money";
 import { buildInstallments, financedCents } from "@/lib/tarjetas/installments";
+import { sharesFromItems } from "@/lib/tarjetas/items";
 import { formatDate } from "../types";
 import type { Card, Person } from "./types";
 
+type ItemRow = { key: number; name: string; amountText: string; /** "" = compartido a partes iguales */ owner: string };
 type Mode = "me" | "other" | "equal" | "custom";
 
 type Props = {
@@ -54,6 +57,7 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
   const [interestText, setInterestText] = useState("");
   const [mode, setMode] = useState<Mode>(people.length > 1 ? "equal" : "me");
   const [percents, setPercents] = useState<Record<string, string>>(() => evenPercents(ids));
+  const [items, setItems] = useState<ItemRow[]>([]);
   const [error, setError] = useState("");
   const save = useMutation({
     mutationFn: async (args: Record<string, unknown>) => {
@@ -65,7 +69,10 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
   const saving = save.isPending;
 
   const card = cards.find((c) => c.id === cardId);
-  const amount = parseAmount(amountText);
+  // Con productos, el importe es la suma de sus precios y el reparto sale de ellos.
+  const useItems = items.length > 0;
+  const itemCents = items.reduce((sum, it) => sum + toCents(parseAmount(it.amountText) ?? 0), 0);
+  const amount = useItems ? (itemCents > 0 ? itemCents / 100 : null) : parseAmount(amountText);
   const interest = interestText ? Number(interestText.replace(",", ".")) : 0;
   const interestOk = Number.isFinite(interest) && interest >= 0;
 
@@ -82,9 +89,14 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
     return { rows, total: financedCents(toCents(amount), interest) };
   }, [card, amount, interest, interestOk, date, count]);
 
+  const addItem = () =>
+    setItems((list) => [...list, { key: Date.now() + list.length, name: "", amountText: "", owner: people.length > 1 ? "" : meId }]);
+  const updateItem = (key: number, change: Partial<ItemRow>) => setItems((list) => list.map((it) => (it.key === key ? { ...it, ...change } : it)));
+
   const percentSum = ids.reduce((s, id) => s + (Number((percents[id] ?? "").replace(",", ".")) || 0), 0);
 
   function buildShares(): { user_id: string; percent: number }[] | string {
+    if (useItems) return sharesFromItems(items.map((it) => ({ cents: toCents(parseAmount(it.amountText) ?? 0), owner: it.owner || null })), ids);
     if (mode === "me") return [{ user_id: meId, percent: 100 }];
     if (mode === "other" && other) return [{ user_id: other.id, percent: 100 }];
     const source = mode === "equal" ? evenPercents(ids) : percents;
@@ -101,6 +113,9 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
     setError("");
     if (!card) return setError("Primero elige la tarjeta.");
     if (!description.trim()) return setError("Escribe qué compraste.");
+    if (useItems && items.some((it) => !it.name.trim() || !parseAmount(it.amountText))) {
+      return setError("Cada producto necesita su nombre y su precio. Quita los que no uses.");
+    }
     if (!amount || amount <= 0) return setError("Escribe un importe válido, por ejemplo 349,90.");
     if (!interestOk) return setError("El interés debe ser un número, por ejemplo 12 o 0.");
     if (!Number.isInteger(count) || count < 1 || count > 60) return setError("Las cuotas deben estar entre 1 y 60.");
@@ -121,6 +136,10 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
         p_notes: null,
         p_shares: shares,
         p_installments: preview.rows.map((r) => ({ number: r.number, due_date: r.due_date, amount: r.cents / 100 })),
+        // Sin productos no se manda: así funciona igual aunque falte la migración 0034.
+        ...(useItems
+          ? { p_items: items.map((it) => ({ name: it.name.trim(), amount: parseAmount(it.amountText), user_id: it.owner || null })) }
+          : {}),
       });
     } catch {
       return setError("No se pudo guardar la compra. Revisa tu conexión e inténtalo de nuevo.");
@@ -160,7 +179,16 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={label} htmlFor="p-amount">Importe (€)</label>
-          <input id="p-amount" className={field} inputMode="decimal" value={amountText} onChange={(e) => setAmountText(e.target.value)} placeholder="0,00" />
+          <input
+            id="p-amount"
+            className={`${field} ${useItems ? "bg-washi-deep" : ""}`}
+            inputMode="decimal"
+            value={useItems ? (itemCents > 0 ? String(itemCents / 100).replace(".", ",") : "") : amountText}
+            onChange={(e) => setAmountText(e.target.value)}
+            readOnly={useItems}
+            placeholder="0,00"
+          />
+          {useItems && <p className="mt-1 px-1 text-[11px] text-ink-soft">Suma de los productos</p>}
         </div>
         <div>
           <label className={label} htmlFor="p-date">Fecha</label>
@@ -171,6 +199,61 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
       <div>
         <label className={label} htmlFor="p-merchant">Comercio (opcional)</label>
         <input id="p-merchant" className={field} value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="Dónde la compraste" maxLength={60} />
+      </div>
+
+      <div>
+        <p className={label}>Productos (opcional)</p>
+        {useItems && (
+          <ul className="mb-2 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+            {items.map((it) => (
+              <li key={it.key} className="flex flex-col gap-2 p-2.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    className={`${field} min-h-10 flex-1`}
+                    value={it.name}
+                    onChange={(e) => updateItem(it.key, { name: e.target.value })}
+                    placeholder="Balde, perchas, mueble…"
+                    maxLength={60}
+                    aria-label="Nombre del producto"
+                  />
+                  <input
+                    className={`${field} min-h-10 w-24 text-right`}
+                    inputMode="decimal"
+                    value={it.amountText}
+                    onChange={(e) => updateItem(it.key, { amountText: e.target.value })}
+                    placeholder="0,00"
+                    aria-label={`Precio de ${it.name || "el producto"}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setItems((list) => list.filter((x) => x.key !== it.key))}
+                    aria-label="Quitar producto"
+                    className="flex size-10 shrink-0 items-center justify-center rounded-full text-ink-soft transition active:scale-90"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                {people.length > 1 && (
+                  <select
+                    className={`${field} min-h-10 text-sm`}
+                    value={it.owner}
+                    onChange={(e) => updateItem(it.key, { owner: e.target.value })}
+                    aria-label={`A quién corresponde ${it.name || "el producto"}`}
+                  >
+                    <option value="">{people.length === 2 ? "Compartido 50 / 50" : "Compartido a partes iguales"}</option>
+                    {people.map((p) => (
+                      <option key={p.id} value={p.id}>{p.id === meId ? "Solo yo" : `Solo ${p.name}`}</option>
+                    ))}
+                  </select>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <button type="button" onClick={addItem} className="flex min-h-10 items-center gap-1.5 rounded-xl border border-dashed border-line px-3 text-sm font-medium text-forest transition active:scale-95">
+          <Plus size={15} /> Añadir producto
+        </button>
+        {!useItems && <p className="mt-1.5 px-1 text-xs text-ink-soft">Si compraste varias cosas, apúntalas y cada una puede ser de una persona o de las dos.</p>}
       </div>
 
       <div>
@@ -235,7 +318,17 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
         </div>
       )}
 
-      {people.length > 1 && (
+      {useItems && people.length > 1 && amount ? (
+        <p className="rounded-xl bg-background px-3.5 py-2.5 text-sm text-ink-soft">
+          Corresponde a{" "}
+          {sharesFromItems(items.map((it) => ({ cents: toCents(parseAmount(it.amountText) ?? 0), owner: it.owner || null })), ids)
+            .map((sh) => `${people.find((p) => p.id === sh.user_id)?.name ?? "Alguien"} ${String(sh.percent).replace(".", ",")} %`)
+            .join(" · ")}
+          . Cada cuota se pasa a Gastos con este reparto.
+        </p>
+      ) : null}
+
+      {people.length > 1 && !useItems && (
         <div>
           <p className={label}>¿A quién corresponde?</p>
           <div className="flex gap-1 rounded-xl bg-washi-deep p-1">

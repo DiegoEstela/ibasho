@@ -7,13 +7,14 @@ import { formatEUR, toCents } from "@/lib/gastos/money";
 import { isInstallmentPaid } from "@/lib/tarjetas/installments";
 import { purchaseStats } from "@/lib/tarjetas/summary";
 import { formatDate } from "../types";
-import type { Card, Installment, Person, Purchase, Share } from "./types";
+import type { Card, Installment, Person, Purchase, PurchaseItem, Share } from "./types";
 
 type Props = {
   purchase: Purchase | null;
   card: Card | undefined;
   people: Person[];
   shares: Share[];
+  items: PurchaseItem[];
   installments: Installment[];
   today: string;
   /** El hogar tiene una sola persona: los gastos compartidos aún no están disponibles. */
@@ -40,6 +41,7 @@ function Detail({
   card,
   people,
   shares,
+  items,
   installments,
   today,
   alone,
@@ -88,6 +90,23 @@ function Detail({
             .map((s) => `${nameOf(s.user_id)} ${String(s.percent).replace(".", ",")} %`)
             .join(" · ")}
         </p>
+      )}
+
+      {items.length > 0 && (
+        <div>
+          <h3 className="mb-1.5 px-1 text-xs font-medium uppercase tracking-wider text-ink-soft">Productos</h3>
+          <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+            {items.map((item) => (
+              <li key={item.id} className="flex min-h-11 items-center gap-3 px-3.5 py-1.5">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[15px]">{item.name}</span>
+                  <span className="block text-xs text-ink-soft">{item.user_id ? `Solo ${nameOf(item.user_id)}` : "Compartido"}</span>
+                </span>
+                <span className="text-[15px] font-medium">{formatEUR(toCents(item.amount))}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <div>

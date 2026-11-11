@@ -34,6 +34,9 @@ export type Purchase = {
   created_at: string;
 };
 
+/** Producto de una compra con su importe; `user_id` nulo = compartido a partes iguales. */
+export type PurchaseItem = { id: string; purchase_id: string; name: string; amount: number; user_id: string | null; position: number };
+
 export type Share = { purchase_id: string; user_id: string; percent: number };
 
 export type Installment = {
