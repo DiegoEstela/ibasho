@@ -176,20 +176,13 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
         <input id="p-desc" className={field} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Televisor, vuelos, sofá…" maxLength={80} autoFocus />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={label} htmlFor="p-amount">Importe (€)</label>
-          <input
-            id="p-amount"
-            className={`${field} ${useItems ? "bg-washi-deep" : ""}`}
-            inputMode="decimal"
-            value={useItems ? (itemCents > 0 ? String(itemCents / 100).replace(".", ",") : "") : amountText}
-            onChange={(e) => setAmountText(e.target.value)}
-            readOnly={useItems}
-            placeholder="0,00"
-          />
-          {useItems && <p className="mt-1 px-1 text-[11px] text-ink-soft">Suma de los productos</p>}
-        </div>
+      <div className={useItems ? "" : "grid grid-cols-2 gap-3"}>
+        {!useItems && (
+          <div>
+            <label className={label} htmlFor="p-amount">Importe (€)</label>
+            <input id="p-amount" className={field} inputMode="decimal" value={amountText} onChange={(e) => setAmountText(e.target.value)} placeholder="0,00" />
+          </div>
+        )}
         <div>
           <label className={label} htmlFor="p-date">Fecha</label>
           <input id="p-date" type="date" className={field} value={date} onChange={(e) => setDate(e.target.value)} />
@@ -203,57 +196,82 @@ function PurchaseForm({ cards, defaultCardId, people, meId, onSaved }: Props) {
 
       <div>
         <p className={label}>Productos (opcional)</p>
-        {useItems && (
-          <ul className="mb-2 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
-            {items.map((it) => (
-              <li key={it.key} className="flex flex-col gap-2 p-2.5">
-                <div className="flex items-center gap-2">
-                  <input
-                    className={`${field} min-h-10 flex-1`}
-                    value={it.name}
-                    onChange={(e) => updateItem(it.key, { name: e.target.value })}
-                    placeholder="Balde, perchas, mueble…"
-                    maxLength={60}
-                    aria-label="Nombre del producto"
-                  />
-                  <input
-                    className={`${field} min-h-10 w-24 text-right`}
-                    inputMode="decimal"
-                    value={it.amountText}
-                    onChange={(e) => updateItem(it.key, { amountText: e.target.value })}
-                    placeholder="0,00"
-                    aria-label={`Precio de ${it.name || "el producto"}`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setItems((list) => list.filter((x) => x.key !== it.key))}
-                    aria-label="Quitar producto"
-                    className="flex size-10 shrink-0 items-center justify-center rounded-full text-ink-soft transition active:scale-90"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-                {people.length > 1 && (
-                  <select
-                    className={`${field} min-h-10 text-sm`}
-                    value={it.owner}
-                    onChange={(e) => updateItem(it.key, { owner: e.target.value })}
-                    aria-label={`A quién corresponde ${it.name || "el producto"}`}
-                  >
-                    <option value="">{people.length === 2 ? "Compartido 50 / 50" : "Compartido a partes iguales"}</option>
-                    {people.map((p) => (
-                      <option key={p.id} value={p.id}>{p.id === meId ? "Solo yo" : `Solo ${p.name}`}</option>
-                    ))}
-                  </select>
-                )}
-              </li>
-            ))}
-          </ul>
+        {useItems ? (
+          <div className="overflow-hidden rounded-2xl border border-line bg-surface">
+            <div className="flex items-center gap-2 border-b border-line bg-washi-deep px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-ink-soft">
+              <span className="flex-1">Producto</span>
+              <span className="w-28 pr-1 text-right">Precio</span>
+              <span className="w-8" />
+            </div>
+            <ul className="divide-y divide-line">
+              {items.map((it) => (
+                <li key={it.key} className="flex flex-col gap-2 px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <input
+                      className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-background px-3 text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest"
+                      value={it.name}
+                      onChange={(e) => updateItem(it.key, { name: e.target.value })}
+                      placeholder="Balde, perchas, mueble…"
+                      maxLength={60}
+                      aria-label="Nombre del producto"
+                    />
+                    <div className="relative w-28 shrink-0">
+                      <input
+                        className="min-h-11 w-full rounded-xl border border-line bg-background py-0 pl-3 pr-7 text-right text-base text-ink outline-none placeholder:text-ink-soft/70 focus:border-forest"
+                        inputMode="decimal"
+                        value={it.amountText}
+                        onChange={(e) => updateItem(it.key, { amountText: e.target.value })}
+                        placeholder="0,00"
+                        aria-label={`Precio de ${it.name || "el producto"}`}
+                      />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-ink-soft">€</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setItems((list) => list.filter((x) => x.key !== it.key))}
+                      aria-label="Quitar producto"
+                      className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-soft transition active:scale-90"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                  {people.length > 1 && (
+                    <div className="flex gap-1.5 chip-row" role="group" aria-label={`A quién corresponde ${it.name || "el producto"}`}>
+                      {[{ id: "", name: people.length === 2 ? "Compartido 50/50" : "Compartido" }, ...people].map((o) => {
+                        const selected = it.owner === o.id;
+                        return (
+                          <button
+                            key={o.id || "shared"}
+                            type="button"
+                            onClick={() => updateItem(it.key, { owner: o.id })}
+                            aria-pressed={selected}
+                            className={`min-h-9 shrink-0 rounded-full border px-3 text-[13px] transition ${
+                              selected ? "border-forest bg-forest/15 font-medium text-forest" : "border-line bg-surface text-ink-soft"
+                            }`}
+                          >
+                            {o.id === "" ? o.name : o.id === meId ? "Solo yo" : `Solo ${o.name}`}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <button type="button" onClick={addItem} className="flex min-h-11 w-full items-center gap-1.5 border-t border-line px-3 text-sm font-medium text-forest transition active:bg-washi-deep">
+              <Plus size={15} /> Añadir otro producto
+            </button>
+            <div className="flex items-baseline justify-between gap-3 border-t border-line bg-forest/10 px-3.5 py-3">
+              <span className="text-sm font-medium text-forest">Total de la compra</span>
+              <span className="font-display text-xl font-bold text-forest">{formatEUR(itemCents)}</span>
+            </div>
+          </div>
+        ) : (
+          <button type="button" onClick={addItem} className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-line px-3 text-sm font-medium text-forest transition active:scale-95">
+            <Plus size={15} /> Detallar productos
+          </button>
         )}
-        <button type="button" onClick={addItem} className="flex min-h-10 items-center gap-1.5 rounded-xl border border-dashed border-line px-3 text-sm font-medium text-forest transition active:scale-95">
-          <Plus size={15} /> Añadir producto
-        </button>
-        {!useItems && <p className="mt-1.5 px-1 text-xs text-ink-soft">Si compraste varias cosas, apúntalas y cada una puede ser de una persona o de las dos.</p>}
+        {!useItems && <p className="mt-1.5 px-1 text-xs text-ink-soft">Si compraste varias cosas, apúntalas: el total se suma solo y cada una puede ser de una persona o de las dos.</p>}
       </div>
 
       <div>
